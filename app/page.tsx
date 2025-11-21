@@ -496,29 +496,32 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-yellow-50">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-yellow-50 page-transition">
       <div className="max-w-7xl mx-auto p-6">
-        <header className="bg-gradient-to-r from-red-600 via-orange-600 to-red-600 rounded-xl shadow-lg p-8 mb-6 relative overflow-hidden">
+        <header className="bg-gradient-to-r from-red-600 via-orange-600 to-red-600 rounded-2xl shadow-2xl p-8 mb-6 relative overflow-hidden animate-fade-in-down">
           <div className="absolute inset-0 bg-black opacity-5"></div>
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" style={{ backgroundSize: '200% 100%' }}></div>
           <div className="relative z-10 flex justify-between items-center">
             <div className="flex items-center gap-4">
-              <div className="bg-white rounded-full p-3 shadow-lg">
+              <div className="bg-white rounded-full p-3 shadow-2xl transform transition-transform duration-300 hover:scale-110 hover:rotate-12 cursor-pointer">
                 <Pizza className="w-10 h-10 text-red-600" />
               </div>
               <div>
                 <div className="flex items-center gap-3">
-                  <h1 className="text-4xl font-black text-white tracking-tight">PizzAI</h1>
-                  <Sparkles className="w-6 h-6 text-yellow-300" />
+                  <h1 className="text-4xl font-black text-white tracking-tight text-shadow-lg">PizzAI</h1>
+                  <Sparkles className="w-6 h-6 text-yellow-300 animate-pulse-soft" />
                 </div>
                 <p className="text-red-100 mt-1 font-medium text-lg">AI-Powered Restaurant Operations Platform</p>
               </div>
             </div>
-            <div className="text-right bg-white/10 backdrop-blur-sm rounded-lg px-6 py-3 border border-white/20">
-              <div className="text-lg font-bold text-white">
+            <div className="glass text-right rounded-xl px-6 py-3 shadow-lg transform transition-all duration-300 hover:scale-105">
+              <div className="text-lg font-bold text-white text-shadow">
                 {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
               </div>
               <div className="flex items-center justify-end gap-2 mt-2">
-                <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
+                <div className="transform transition-transform duration-300 hover:scale-125 hover:rotate-12">
+                  <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
+                </div>
                 <span className="text-sm text-white font-medium">
                   {hourlyWeather[0]?.temp_f || '--'}°F - {hourlyWeather[0]?.condition || 'Loading...'}
                 </span>
@@ -527,16 +530,17 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
           </div>
         </header>
 
-        <div className="bg-white rounded-xl shadow-lg mb-6 overflow-hidden border border-red-100">
+        <div className="bg-white rounded-2xl shadow-xl mb-6 overflow-hidden border border-red-100 animate-fade-in">
           <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-orange-50">
             <nav className="flex">
-              {['dashboard', 'scheduler', 'inventory', 'promo'].map((tab) => (
+              {['dashboard', 'scheduler', 'inventory', 'promo'].map((tab, index) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-8 py-4 font-bold capitalize transition-all ${
+                  style={{ animationDelay: `${index * 0.1}s` }}
+                  className={`px-8 py-4 font-bold capitalize transition-all duration-300 transform hover:scale-105 animate-fade-in ${
                     activeTab === tab
-                      ? 'border-b-4 border-red-600 text-red-600 bg-white'
+                      ? 'border-b-4 border-red-600 text-red-600 bg-white shadow-sm'
                       : 'text-gray-600 hover:text-red-600 hover:bg-white/50'
                   }`}
                 >
@@ -550,23 +554,23 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
 
           <div className="p-6">
             {activeTab === 'dashboard' && (
-              <div className="space-y-6">
+              <div className="space-y-6 tab-content">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-4">
                     <h2 className="text-2xl font-bold text-gray-900">Operations Forecast</h2>
                     <div className="flex gap-2">
                       <button
                         onClick={() => setViewMode('today')}
-                        className={`px-4 py-2 rounded-lg transition-all font-semibold ${
-                          viewMode === 'today' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-gray-700 hover:bg-red-50 border-2 border-red-200'
+                        className={`px-4 py-2 rounded-lg transition-all duration-300 font-semibold transform hover:scale-105 active:scale-95 ${
+                          viewMode === 'today' ? 'bg-red-600 text-white shadow-lg' : 'btn-secondary'
                         }`}
                       >
                         Today
                       </button>
                       <button
                         onClick={() => setViewMode('week')}
-                        className={`px-4 py-2 rounded-lg transition-all font-semibold ${
-                          viewMode === 'week' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-gray-700 hover:bg-red-50 border-2 border-red-200'
+                        className={`px-4 py-2 rounded-lg transition-all duration-300 font-semibold transform hover:scale-105 active:scale-95 ${
+                          viewMode === 'week' ? 'bg-red-600 text-white shadow-lg' : 'btn-secondary'
                         }`}
                       >
                         7-Day
@@ -576,17 +580,17 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                   <div className="flex gap-3">
                     <button
                       onClick={() => setPrepMode(!prepMode)}
-                      className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 font-semibold ${
-                        prepMode ? 'bg-green-600 text-white shadow-lg scale-105' : 'bg-white text-gray-700 hover:bg-green-50 border-2 border-green-200'
+                      className={`px-4 py-2 rounded-lg transition-all duration-300 flex items-center gap-2 font-semibold transform hover:scale-105 active:scale-95 ${
+                        prepMode ? 'bg-green-600 text-white shadow-lg' : 'btn-secondary hover:border-green-200 hover:bg-green-50'
                       }`}
                     >
-                      <Clock className="w-4 h-4" />
+                      <Clock className={`w-4 h-4 ${prepMode ? 'animate-pulse-soft' : ''}`} />
                       {prepMode ? 'Prep Mode On' : 'Prep Mode'}
                     </button>
                     <button
                       onClick={viewMode === 'today' ? generateForecast : generateWeeklyForecast}
                       disabled={loading}
-                      className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
+                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                     >
                       {loading ? 'Generating...' : `Generate ${viewMode === 'today' ? 'Forecast' : 'Weekly Forecast'}`}
                     </button>
@@ -596,32 +600,32 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 {viewMode === 'today' && forecast && (
                   <>
                     <div className="grid grid-cols-4 gap-4">
-                      <div className="bg-blue-50 rounded-lg p-4">
+                      <div className="stat-card bg-blue-50 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
                         <div className="flex items-center gap-2 text-blue-700 mb-2">
-                          <TrendingUp className="w-5 h-5" />
+                          <TrendingUp className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
                           <span className="font-semibold">Peak Hours</span>
                         </div>
                         <p className="text-2xl font-bold text-blue-900">{forecast.peak_hours[0]}</p>
                       </div>
-                      <div className="bg-green-50 rounded-lg p-4">
+                      <div className="stat-card bg-green-50 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
                         <div className="flex items-center gap-2 text-green-700 mb-2">
-                          <CheckCircle className="w-5 h-5" />
+                          <CheckCircle className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
                           <span className="font-semibold">Orders</span>
                         </div>
                         <p className="text-2xl font-bold text-green-900">
                           {forecast.hourly_forecast.reduce((sum, h) => sum + h.predicted_orders, 0)}
                         </p>
                       </div>
-                      <div className="bg-purple-50 rounded-lg p-4">
+                      <div className="stat-card bg-purple-50 animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
                         <div className="flex items-center gap-2 text-purple-700 mb-2">
-                          <DollarSign className="w-5 h-5" />
+                          <DollarSign className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
                           <span className="font-semibold">Revenue</span>
                         </div>
                         <p className="text-2xl font-bold text-purple-900">${forecast.revenue_estimate}</p>
                       </div>
-                      <div className="bg-amber-50 rounded-lg p-4">
+                      <div className="stat-card bg-amber-50 animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
                         <div className="flex items-center gap-2 text-amber-700 mb-2">
-                          <AlertCircle className="w-5 h-5" />
+                          <AlertCircle className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
                           <span className="font-semibold">Weather</span>
                         </div>
                         <p className="text-sm text-amber-900">{forecast.weather_impact.substring(0, 30)}...</p>
@@ -877,7 +881,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                     {currentSchedule && (
                       <button
                         onClick={handleExportSchedule}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
                       >
                         Export CSV
                       </button>
@@ -885,7 +889,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                     <button
                       onClick={generateSchedule}
                       disabled={scheduleLoading}
-                      className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
+                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                     >
                       {scheduleLoading ? 'Generating...' : 'Generate Schedule'}
                     </button>
@@ -1004,7 +1008,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                               if (employeeShifts.length === 0) return null;
 
                               return (
-                                <tr key={employee.id} className="hover:bg-gray-50">
+                                <tr key={employee.id} className="hover:bg-gray-50 transition-colors duration-200">
                                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{employee.name}</td>
                                   <td className="px-4 py-3 text-sm text-gray-600 capitalize">{employee.role}</td>
                                   {weekDates.map((date) => {
