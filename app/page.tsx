@@ -99,7 +99,7 @@ Respond with ONLY the JSON object, no markdown or explanation.`
       });
 
       const data = await response.json();
-      const text = data.content.map(item => item.text || "").join("\n").trim();
+      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
       const cleanText = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleanText);
       setForecast(parsed);
@@ -179,7 +179,7 @@ Respond with ONLY the JSON object.`
       });
 
       const data = await response.json();
-      const text = data.content.map(item => item.text || "").join("\n").trim();
+      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
       const cleanText = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleanText);
       setWeeklyForecast(parsed);
@@ -250,7 +250,7 @@ Respond with ONLY the JSON object, no markdown.`
       });
 
       const data = await response.json();
-      const text = data.content.map(item => item.text || "").join("\n").trim();
+      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
       const cleanText = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleanText);
       setInventoryPlan(parsed);
@@ -310,7 +310,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
       });
 
       const data = await response.json();
-      const text = data.content.map(item => item.text || "").join("\n").trim();
+      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
       const cleanText = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleanText);
       setPromo(parsed);
