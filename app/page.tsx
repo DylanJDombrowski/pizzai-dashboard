@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
 import { Cloud, CloudRain, Sun, TrendingUp, AlertCircle, CheckCircle, Calendar, Clock, DollarSign, Pizza, Sparkles } from 'lucide-react';
+import { getHourlyWeather, getWeeklyWeather, type HourlyWeather, type DailyWeather } from '@/lib/weatherService';
 
 // --- ADD THESE TYPE DEFINITIONS ---
 interface Forecast {
@@ -104,9 +105,36 @@ const PizzAIDashboard = () => {
     channel: 'email'
   });
 
+  // Weather data state
+  const [hourlyWeather, setHourlyWeather] = useState<HourlyWeather[]>(MOCK_DATA.weather);
+  const [weeklyWeather, setWeeklyWeather] = useState<DailyWeather[]>(MOCK_DATA.weekly_weather);
+  const [weatherLoading, setWeatherLoading] = useState(true);
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 60000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Fetch weather data on component mount
+  useEffect(() => {
+    const fetchWeatherData = async () => {
+      setWeatherLoading(true);
+      try {
+        const [hourly, weekly] = await Promise.all([
+          getHourlyWeather(),
+          getWeeklyWeather()
+        ]);
+        setHourlyWeather(hourly);
+        setWeeklyWeather(weekly);
+      } catch (error) {
+        console.error('Error loading weather data:', error);
+        // Keep using mock data as fallback
+      } finally {
+        setWeatherLoading(false);
+      }
+    };
+
+    fetchWeatherData();
   }, []);
 
   const generateForecast = async () => {
@@ -125,7 +153,7 @@ const PizzAIDashboard = () => {
             content: `You are PizzAI, an operations assistant for a pizzeria. Analyze this data and provide a forecast.
 
 Sales History: ${JSON.stringify(MOCK_DATA.sales_history)}
-Weather Forecast: ${JSON.stringify(MOCK_DATA.weather)}
+Weather Forecast: ${JSON.stringify(hourlyWeather)}
 Prep Mode: ${prepMode ? 'Focus on morning prep tasks' : 'Standard mode'}
 
 Generate a JSON response with:
@@ -196,7 +224,7 @@ Historical Patterns:
 - Weekend (Fri-Sat): 150-180 orders
 - Sunday: 120-140 orders
 
-Weekly Weather: ${JSON.stringify(MOCK_DATA.weekly_weather)}
+Weekly Weather: ${JSON.stringify(weeklyWeather)}
 
 Generate a JSON response with:
 {
@@ -402,9 +430,9 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
               </div>
               <div className="flex items-center justify-end gap-2 mt-2">
-                <WeatherIcon condition={MOCK_DATA.weather[0].condition} />
+                <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
                 <span className="text-sm text-white font-medium">
-                  {MOCK_DATA.weather[0].temp_f}°F - {MOCK_DATA.weather[0].condition}
+                  {hourlyWeather[0]?.temp_f || '--'}°F - {hourlyWeather[0]?.condition || 'Loading...'}
                 </span>
               </div>
             </div>
