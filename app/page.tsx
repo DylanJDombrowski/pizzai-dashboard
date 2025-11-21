@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Minus } from 'lucide-react';
+import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Plus, X, Pencil, Trash2 } from 'lucide-react';
 import { getHourlyWeather, getWeeklyWeather, type HourlyWeather, type DailyWeather } from '@/lib/weatherService';
 import { getHighImpactEventsInNext } from '@/lib/specialEvents';
 import type { SpecialEvent } from '@/lib/schedulingTypes';
-import { storageService } from '@/lib/storageService';
+import { storageService, type CustomPrepTask, type CustomInventoryItem } from '@/lib/storageService';
 import { analyticsService } from '@/lib/analyticsService';
 
 // Simplified type definitions
@@ -81,9 +81,41 @@ const PizzAIDashboard = () => {
   const AVG_HOURLY_RATE = 15; // $15/hour average
   const TARGET_LABOR_PERCENT = 28; // Target 28% labor cost
 
+  // Prep & Inventory state
+  const [customPrepTasks, setCustomPrepTasks] = useState<CustomPrepTask[]>([]);
+  const [checkedPrepItems, setCheckedPrepItems] = useState<string[]>([]);
+  const [newTaskInput, setNewTaskInput] = useState('');
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [customInventory, setCustomInventory] = useState<CustomInventoryItem[]>([]);
+  const [editingItem, setEditingItem] = useState<string | null>(null);
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [newItemForm, setNewItemForm] = useState({ ingredient: '', unit: 'lb', par_level: '' });
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 60000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Load custom prep tasks, checked items, and inventory on mount
+  useEffect(() => {
+    setCustomPrepTasks(storageService.getCustomPrepTasks());
+    setCheckedPrepItems(storageService.getCheckedPrepItems().checkedIds);
+    const savedInventory = storageService.getCustomInventory();
+    if (savedInventory.length > 0) {
+      setCustomInventory(savedInventory);
+    } else {
+      // Initialize with defaults if no custom inventory
+      const defaults: CustomInventoryItem[] = MOCK_DATA.inventory.map((item, idx) => ({
+        id: `default_${idx}`,
+        ingredient: item.ingredient,
+        unit: item.unit,
+        par_level: item.par_level,
+        on_hand: item.on_hand,
+        cost_per_unit: item.cost_per_unit,
+      }));
+      setCustomInventory(defaults);
+      storageService.saveCustomInventory(defaults);
+    }
   }, []);
 
   // Fetch weather and events on mount
@@ -516,22 +548,232 @@ const PizzAIDashboard = () => {
         {/* PREP & STOCK TAB */}
         {activeTab === 'prep' && (
           <div className="space-y-4">
+            {/* Today's Prep Tasks - Checkable */}
             <div className="bg-white rounded-xl shadow-md p-6">
-              <h2 className="text-lg font-semibold text-gray-700 mb-4">Inventory Check</h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold text-gray-700">Today's Prep</h2>
+                <button
+                  onClick={() => setShowAddTask(!showAddTask)}
+                  className="text-sm text-red-600 hover:text-red-700 font-medium flex items-center gap-1"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Task
+                </button>
+              </div>
 
-              {/* Alerts First */}
-              {MOCK_DATA.inventory.filter(item => getInventoryStatus(item).status === 'critical').length > 0 && (
+              {/* Add Task Input */}
+              {showAddTask && (
+                <div className="flex gap-2 mb-4">
+                  <input
+                    type="text"
+                    value={newTaskInput}
+                    onChange={(e) => setNewTaskInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newTaskInput.trim()) {
+                        const newTask = storageService.addCustomPrepTask(newTaskInput.trim());
+                        setCustomPrepTasks([...customPrepTasks, newTask]);
+                        setNewTaskInput('');
+                      }
+                    }}
+                    placeholder="Enter a recurring task..."
+                    className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  />
+                  <button
+                    onClick={() => {
+                      if (newTaskInput.trim()) {
+                        const newTask = storageService.addCustomPrepTask(newTaskInput.trim());
+                        setCustomPrepTasks([...customPrepTasks, newTask]);
+                        setNewTaskInput('');
+                      }
+                    }}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAddTask(false);
+                      setNewTaskInput('');
+                    }}
+                    className="px-3 py-2 text-gray-500 hover:text-gray-700"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              )}
+
+              <ul className="space-y-2">
+                {/* Forecast-generated prep items */}
+                {forecast?.prep_items.map((item, idx) => {
+                  const itemId = `forecast_${idx}`;
+                  const isChecked = checkedPrepItems.includes(itemId);
+                  return (
+                    <li
+                      key={itemId}
+                      onClick={() => {
+                        const newChecked = storageService.togglePrepItemChecked(itemId);
+                        if (newChecked) {
+                          setCheckedPrepItems([...checkedPrepItems, itemId]);
+                        } else {
+                          setCheckedPrepItems(checkedPrepItems.filter(id => id !== itemId));
+                        }
+                      }}
+                      className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all ${
+                        isChecked ? 'bg-green-50' : 'bg-gray-50 hover:bg-gray-100'
+                      }`}
+                    >
+                      <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+                        isChecked ? 'bg-green-500 border-green-500' : 'border-gray-300 hover:border-green-500'
+                      }`}>
+                        {isChecked && <CheckCircle className="w-4 h-4 text-white" />}
+                      </div>
+                      <span className={`flex-1 ${isChecked ? 'text-gray-400 line-through' : 'text-gray-700'}`}>
+                        {item}
+                      </span>
+                    </li>
+                  );
+                })}
+
+                {/* Custom prep tasks */}
+                {customPrepTasks.map((task) => {
+                  const isChecked = checkedPrepItems.includes(task.id);
+                  return (
+                    <li
+                      key={task.id}
+                      className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
+                        isChecked ? 'bg-green-50' : 'bg-blue-50 hover:bg-blue-100'
+                      }`}
+                    >
+                      <div
+                        onClick={() => {
+                          const newChecked = storageService.togglePrepItemChecked(task.id);
+                          if (newChecked) {
+                            setCheckedPrepItems([...checkedPrepItems, task.id]);
+                          } else {
+                            setCheckedPrepItems(checkedPrepItems.filter(id => id !== task.id));
+                          }
+                        }}
+                        className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center cursor-pointer transition-colors ${
+                          isChecked ? 'bg-green-500 border-green-500' : 'border-blue-300 hover:border-green-500'
+                        }`}
+                      >
+                        {isChecked && <CheckCircle className="w-4 h-4 text-white" />}
+                      </div>
+                      <span className={`flex-1 ${isChecked ? 'text-gray-400 line-through' : 'text-gray-700'}`}>
+                        {task.task}
+                      </span>
+                      <button
+                        onClick={() => {
+                          storageService.deleteCustomPrepTask(task.id);
+                          setCustomPrepTasks(customPrepTasks.filter(t => t.id !== task.id));
+                        }}
+                        className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                        title="Delete task"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {!forecast && customPrepTasks.length === 0 && (
+                <p className="text-gray-500 text-sm text-center py-4">
+                  Loading prep tasks...
+                </p>
+              )}
+            </div>
+
+            {/* Inventory Check */}
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold text-gray-700">Inventory Check</h2>
+                <button
+                  onClick={() => setShowAddItem(!showAddItem)}
+                  className="text-sm text-red-600 hover:text-red-700 font-medium flex items-center gap-1"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Item
+                </button>
+              </div>
+
+              {/* Add Item Form */}
+              {showAddItem && (
+                <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <input
+                      type="text"
+                      value={newItemForm.ingredient}
+                      onChange={(e) => setNewItemForm({ ...newItemForm, ingredient: e.target.value })}
+                      placeholder="Ingredient name"
+                      className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                    <select
+                      value={newItemForm.unit}
+                      onChange={(e) => setNewItemForm({ ...newItemForm, unit: e.target.value })}
+                      className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    >
+                      <option value="lb">lb</option>
+                      <option value="oz">oz</option>
+                      <option value="qt">qt</option>
+                      <option value="gal">gal</option>
+                      <option value="each">each</option>
+                      <option value="balls">balls</option>
+                      <option value="cases">cases</option>
+                    </select>
+                    <input
+                      type="number"
+                      value={newItemForm.par_level}
+                      onChange={(e) => setNewItemForm({ ...newItemForm, par_level: e.target.value })}
+                      placeholder="Par level"
+                      className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        if (newItemForm.ingredient && newItemForm.par_level) {
+                          const newItem = storageService.addInventoryItem({
+                            ingredient: newItemForm.ingredient,
+                            unit: newItemForm.unit,
+                            par_level: parseFloat(newItemForm.par_level),
+                            on_hand: 0
+                          });
+                          setCustomInventory([...customInventory, newItem]);
+                          setNewItemForm({ ingredient: '', unit: 'lb', par_level: '' });
+                          setShowAddItem(false);
+                        }
+                      }}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+                    >
+                      Add Ingredient
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowAddItem(false);
+                        setNewItemForm({ ingredient: '', unit: 'lb', par_level: '' });
+                      }}
+                      className="px-4 py-2 text-gray-600 hover:text-gray-800 text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Critical Alerts */}
+              {customInventory.filter(item => (item.on_hand / item.par_level) < 0.3).length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                   <div className="flex items-center gap-2 text-red-800 font-semibold mb-2">
                     <AlertCircle className="w-5 h-5" />
                     Order Needed Today
                   </div>
-                  {MOCK_DATA.inventory
-                    .filter(item => getInventoryStatus(item).status === 'critical')
+                  {customInventory
+                    .filter(item => (item.on_hand / item.par_level) < 0.3)
                     .map(item => (
-                      <div key={item.ingredient} className="flex justify-between py-1 text-red-700">
+                      <div key={item.id} className="flex justify-between py-1 text-red-700">
                         <span>{item.ingredient}</span>
-                        <span className="font-semibold">{item.par_level - inventoryInputs[item.ingredient]} {item.unit} needed</span>
+                        <span className="font-semibold">{item.par_level - item.on_hand} {item.unit} needed</span>
                       </div>
                     ))
                   }
@@ -540,75 +782,149 @@ const PizzAIDashboard = () => {
 
               {/* Inventory List */}
               <div className="space-y-3">
-                {MOCK_DATA.inventory.map((item) => {
-                  const status = getInventoryStatus(item);
-                  const onHand = inventoryInputs[item.ingredient];
-                  const percentage = Math.round((onHand / item.par_level) * 100);
+                {customInventory.map((item) => {
+                  const ratio = item.on_hand / item.par_level;
+                  const status = ratio < 0.3 ? { color: 'red', label: 'ORDER NOW' }
+                    : ratio < 0.5 ? { color: 'orange', label: 'Low' }
+                    : ratio < 0.8 ? { color: 'yellow', label: 'Watch' }
+                    : { color: 'green', label: 'Good' };
+                  const percentage = Math.round(ratio * 100);
+                  const isEditing = editingItem === item.id;
 
                   return (
-                    <div key={item.ingredient} className="bg-gray-50 rounded-lg p-4">
-                      <div className="flex justify-between items-center mb-2">
-                        <div className="flex items-center gap-3">
-                          <span className="font-medium text-gray-900">{item.ingredient}</span>
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
-                            status.color === 'red' ? 'bg-red-100 text-red-700' :
-                            status.color === 'orange' ? 'bg-orange-100 text-orange-700' :
-                            status.color === 'yellow' ? 'bg-yellow-100 text-yellow-700' :
-                            'bg-green-100 text-green-700'
-                          }`}>
-                            {status.label}
-                          </span>
-                        </div>
-                        <span className="text-sm text-gray-600">Par: {item.par_level} {item.unit}</span>
-                      </div>
-
-                      <div className="flex items-center gap-4">
-                        <div className="flex-1">
-                          <div className="w-full bg-gray-200 rounded-full h-3">
-                            <div
-                              className={`h-3 rounded-full transition-all ${
-                                status.color === 'red' ? 'bg-red-500' :
-                                status.color === 'orange' ? 'bg-orange-500' :
-                                status.color === 'yellow' ? 'bg-yellow-500' :
-                                'bg-green-500'
-                              }`}
-                              style={{ width: `${Math.min(percentage, 100)}%` }}
+                    <div key={item.id} className="bg-gray-50 rounded-lg p-4">
+                      {isEditing ? (
+                        // Edit Mode
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-3 gap-3">
+                            <input
+                              type="text"
+                              defaultValue={item.ingredient}
+                              id={`edit-name-${item.id}`}
+                              placeholder="Name"
+                              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500"
+                            />
+                            <select
+                              defaultValue={item.unit}
+                              id={`edit-unit-${item.id}`}
+                              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500"
+                            >
+                              <option value="lb">lb</option>
+                              <option value="oz">oz</option>
+                              <option value="qt">qt</option>
+                              <option value="gal">gal</option>
+                              <option value="each">each</option>
+                              <option value="balls">balls</option>
+                              <option value="cases">cases</option>
+                            </select>
+                            <input
+                              type="number"
+                              defaultValue={item.par_level}
+                              id={`edit-par-${item.id}`}
+                              placeholder="Par"
+                              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500"
                             />
                           </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                const name = (document.getElementById(`edit-name-${item.id}`) as HTMLInputElement).value;
+                                const unit = (document.getElementById(`edit-unit-${item.id}`) as HTMLSelectElement).value;
+                                const par = parseFloat((document.getElementById(`edit-par-${item.id}`) as HTMLInputElement).value);
+                                storageService.updateInventoryItem(item.id, { ingredient: name, unit, par_level: par });
+                                setCustomInventory(customInventory.map(i =>
+                                  i.id === item.id ? { ...i, ingredient: name, unit, par_level: par } : i
+                                ));
+                                setEditingItem(null);
+                              }}
+                              className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditingItem(null)}
+                              className="px-3 py-1 text-gray-600 hover:text-gray-800 text-sm"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Delete ${item.ingredient}?`)) {
+                                  storageService.deleteInventoryItem(item.id);
+                                  setCustomInventory(customInventory.filter(i => i.id !== item.id));
+                                  setEditingItem(null);
+                                }
+                              }}
+                              className="px-3 py-1 text-red-600 hover:text-red-800 text-sm ml-auto"
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={onHand}
-                            onChange={(e) => setInventoryInputs({
-                              ...inventoryInputs,
-                              [item.ingredient]: parseInt(e.target.value) || 0
-                            })}
-                            className="w-16 px-2 py-1 text-center border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                          />
-                          <span className="text-sm text-gray-500">{item.unit}</span>
-                        </div>
-                      </div>
+                      ) : (
+                        // View Mode
+                        <>
+                          <div className="flex justify-between items-center mb-2">
+                            <div className="flex items-center gap-3">
+                              <span className="font-medium text-gray-900">{item.ingredient}</span>
+                              <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                                status.color === 'red' ? 'bg-red-100 text-red-700' :
+                                status.color === 'orange' ? 'bg-orange-100 text-orange-700' :
+                                status.color === 'yellow' ? 'bg-yellow-100 text-yellow-700' :
+                                'bg-green-100 text-green-700'
+                              }`}>
+                                {status.label}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-gray-600">Par: {item.par_level} {item.unit}</span>
+                              <button
+                                onClick={() => setEditingItem(item.id)}
+                                className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4">
+                            <div className="flex-1">
+                              <div className="w-full bg-gray-200 rounded-full h-3">
+                                <div
+                                  className={`h-3 rounded-full transition-all ${
+                                    status.color === 'red' ? 'bg-red-500' :
+                                    status.color === 'orange' ? 'bg-orange-500' :
+                                    status.color === 'yellow' ? 'bg-yellow-500' :
+                                    'bg-green-500'
+                                  }`}
+                                  style={{ width: `${Math.min(percentage, 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                value={item.on_hand}
+                                onChange={(e) => {
+                                  const newOnHand = parseFloat(e.target.value) || 0;
+                                  storageService.updateInventoryItem(item.id, { on_hand: newOnHand });
+                                  setCustomInventory(customInventory.map(i =>
+                                    i.id === item.id ? { ...i, on_hand: newOnHand } : i
+                                  ));
+                                }}
+                                className="w-16 px-2 py-1 text-center border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                              />
+                              <span className="text-sm text-gray-500">{item.unit}</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
-
-            {/* Today's Prep Tasks */}
-            {forecast && (
-              <div className="bg-white rounded-xl shadow-md p-6">
-                <h2 className="text-lg font-semibold text-gray-700 mb-4">Today's Prep</h2>
-                <ul className="space-y-3">
-                  {forecast.prep_items.map((item, idx) => (
-                    <li key={idx} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                      <div className="w-6 h-6 rounded-full border-2 border-gray-300 flex-shrink-0 cursor-pointer hover:bg-green-100 hover:border-green-500 transition-colors" />
-                      <span className="text-gray-700">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         )}
 

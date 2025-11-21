@@ -16,7 +16,27 @@ const STORAGE_KEYS = {
   INVENTORY_SNAPSHOTS: 'pizzai_inventory',
   PROMOS: 'pizzai_promos',
   ACTUALS: 'pizzai_actuals', // For tracking actual vs predicted
+  CUSTOM_PREP_TASKS: 'pizzai_custom_prep_tasks',
+  CHECKED_PREP_ITEMS: 'pizzai_checked_prep',
+  CUSTOM_INVENTORY: 'pizzai_custom_inventory',
 } as const;
+
+// Custom prep task
+export interface CustomPrepTask {
+  id: string;
+  task: string;
+  createdAt: string;
+}
+
+// Custom inventory item
+export interface CustomInventoryItem {
+  id: string;
+  ingredient: string;
+  unit: string;
+  par_level: number;
+  on_hand: number;
+  cost_per_unit?: number;
+}
 
 // Historical record types
 export interface ForecastRecord {
@@ -394,6 +414,100 @@ class StorageService {
    */
   getTrackedDaysCount(): number {
     return this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS).length;
+  }
+
+  // ===== CUSTOM PREP TASKS =====
+
+  getCustomPrepTasks(): CustomPrepTask[] {
+    return this.getRecords<CustomPrepTask>(STORAGE_KEYS.CUSTOM_PREP_TASKS);
+  }
+
+  addCustomPrepTask(task: string): CustomPrepTask {
+    const records = this.getRecords<CustomPrepTask>(STORAGE_KEYS.CUSTOM_PREP_TASKS);
+    const newTask: CustomPrepTask = {
+      id: this.generateId(),
+      task,
+      createdAt: new Date().toISOString(),
+    };
+    records.push(newTask);
+    this.saveRecords(STORAGE_KEYS.CUSTOM_PREP_TASKS, records);
+    return newTask;
+  }
+
+  deleteCustomPrepTask(id: string): boolean {
+    const records = this.getRecords<CustomPrepTask>(STORAGE_KEYS.CUSTOM_PREP_TASKS);
+    const filtered = records.filter(t => t.id !== id);
+    return this.saveRecords(STORAGE_KEYS.CUSTOM_PREP_TASKS, filtered);
+  }
+
+  // ===== CHECKED PREP ITEMS (resets daily) =====
+
+  getCheckedPrepItems(): { date: string; checkedIds: string[] } {
+    const data = localStorage.getItem(STORAGE_KEYS.CHECKED_PREP_ITEMS);
+    if (!data) return { date: '', checkedIds: [] };
+
+    const parsed = JSON.parse(data);
+    const today = new Date().toISOString().split('T')[0];
+
+    // Reset if different day
+    if (parsed.date !== today) {
+      return { date: today, checkedIds: [] };
+    }
+    return parsed;
+  }
+
+  togglePrepItemChecked(itemId: string): boolean {
+    const today = new Date().toISOString().split('T')[0];
+    const current = this.getCheckedPrepItems();
+
+    let newCheckedIds: string[];
+    if (current.checkedIds.includes(itemId)) {
+      newCheckedIds = current.checkedIds.filter(id => id !== itemId);
+    } else {
+      newCheckedIds = [...current.checkedIds, itemId];
+    }
+
+    localStorage.setItem(STORAGE_KEYS.CHECKED_PREP_ITEMS, JSON.stringify({
+      date: today,
+      checkedIds: newCheckedIds,
+    }));
+    return true;
+  }
+
+  // ===== CUSTOM INVENTORY =====
+
+  getCustomInventory(): CustomInventoryItem[] {
+    return this.getRecords<CustomInventoryItem>(STORAGE_KEYS.CUSTOM_INVENTORY);
+  }
+
+  saveCustomInventory(items: CustomInventoryItem[]): boolean {
+    return this.saveRecords(STORAGE_KEYS.CUSTOM_INVENTORY, items);
+  }
+
+  addInventoryItem(item: Omit<CustomInventoryItem, 'id'>): CustomInventoryItem {
+    const records = this.getRecords<CustomInventoryItem>(STORAGE_KEYS.CUSTOM_INVENTORY);
+    const newItem: CustomInventoryItem = {
+      ...item,
+      id: this.generateId(),
+    };
+    records.push(newItem);
+    this.saveRecords(STORAGE_KEYS.CUSTOM_INVENTORY, records);
+    return newItem;
+  }
+
+  updateInventoryItem(id: string, updates: Partial<CustomInventoryItem>): boolean {
+    const records = this.getRecords<CustomInventoryItem>(STORAGE_KEYS.CUSTOM_INVENTORY);
+    const index = records.findIndex(r => r.id === id);
+    if (index === -1) return false;
+
+    records[index] = { ...records[index], ...updates };
+    return this.saveRecords(STORAGE_KEYS.CUSTOM_INVENTORY, records);
+  }
+
+  deleteInventoryItem(id: string): boolean {
+    const records = this.getRecords<CustomInventoryItem>(STORAGE_KEYS.CUSTOM_INVENTORY);
+    const filtered = records.filter(r => r.id !== id);
+    return this.saveRecords(STORAGE_KEYS.CUSTOM_INVENTORY, filtered);
   }
 
   // ===== EMPLOYEE OPERATIONS =====
