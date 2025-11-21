@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
-import { Cloud, CloudRain, Sun, TrendingUp, AlertCircle, CheckCircle, Calendar, Clock, DollarSign, Pizza, Sparkles } from 'lucide-react';
+import { Cloud, CloudRain, Sun, TrendingUp, AlertCircle, CheckCircle, Calendar, Clock, DollarSign, Pizza, Sparkles, Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // --- ADD THESE TYPE DEFINITIONS ---
 interface Forecast {
@@ -46,6 +47,55 @@ interface Promo {
   target_lift: string;
 }
 // --- END OF TYPE DEFINITIONS ---
+
+// Number counter animation component
+const AnimatedNumber: React.FC<{ value: number; prefix?: string; suffix?: string; duration?: number }> = ({
+  value,
+  prefix = '',
+  suffix = '',
+  duration = 1000
+}) => {
+  const [displayValue, setDisplayValue] = useState(0);
+
+  useEffect(() => {
+    const startTime = Date.now();
+    const startValue = displayValue;
+    const diff = value - startValue;
+
+    const animate = () => {
+      const currentTime = Date.now();
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Easing function for smooth animation
+      const easeOutQuart = 1 - Math.pow(1 - progress, 4);
+      const newValue = Math.floor(startValue + diff * easeOutQuart);
+
+      setDisplayValue(newValue);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+
+    requestAnimationFrame(animate);
+  }, [value, duration]);
+
+  return <>{prefix}{displayValue.toLocaleString()}{suffix}</>;
+};
+
+// Loading skeleton component
+const LoadingSkeleton: React.FC = () => (
+  <div className="space-y-6 animate-fadeIn">
+    <div className="grid grid-cols-4 gap-4">
+      {[1, 2, 3, 4].map((i) => (
+        <div key={i} className="bg-gray-100 rounded-lg p-4 h-24 animate-shimmer"></div>
+      ))}
+    </div>
+    <div className="bg-gray-100 rounded-lg h-80 animate-shimmer"></div>
+    <div className="bg-gray-100 rounded-lg h-40 animate-shimmer"></div>
+  </div>
+);
 
 const MOCK_DATA = {
   sales_history: [
@@ -418,7 +468,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-8 py-4 font-bold capitalize transition-all ${
+                  className={`px-8 py-4 font-bold capitalize transition-all hover:scale-105 active:scale-95 ${
                     activeTab === tab
                       ? 'border-b-4 border-red-600 text-red-600 bg-white'
                       : 'text-gray-600 hover:text-red-600 hover:bg-white/50'
@@ -431,15 +481,23 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
           </div>
 
           <div className="p-6">
-            {activeTab === 'dashboard' && (
-              <div className="space-y-6">
+            <AnimatePresence mode="wait">
+              {activeTab === 'dashboard' && (
+                <motion.div
+                  key="dashboard"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                  className="space-y-6"
+                >
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-4">
                     <h2 className="text-2xl font-bold text-gray-900">Operations Forecast</h2>
                     <div className="flex gap-2">
                       <button
                         onClick={() => setViewMode('today')}
-                        className={`px-4 py-2 rounded-lg transition-all font-semibold ${
+                        className={`px-4 py-2 rounded-lg transition-all font-semibold hover:scale-105 active:scale-95 ${
                           viewMode === 'today' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-gray-700 hover:bg-red-50 border-2 border-red-200'
                         }`}
                       >
@@ -447,7 +505,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                       </button>
                       <button
                         onClick={() => setViewMode('week')}
-                        className={`px-4 py-2 rounded-lg transition-all font-semibold ${
+                        className={`px-4 py-2 rounded-lg transition-all font-semibold hover:scale-105 active:scale-95 ${
                           viewMode === 'week' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-gray-700 hover:bg-red-50 border-2 border-red-200'
                         }`}
                       >
@@ -458,18 +516,19 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                   <div className="flex gap-3">
                     <button
                       onClick={() => setPrepMode(!prepMode)}
-                      className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 font-semibold ${
-                        prepMode ? 'bg-green-600 text-white shadow-lg scale-105' : 'bg-white text-gray-700 hover:bg-green-50 border-2 border-green-200'
+                      className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 font-semibold hover:scale-105 active:scale-95 ${
+                        prepMode ? 'bg-green-600 text-white shadow-lg animate-bounceIn' : 'bg-white text-gray-700 hover:bg-green-50 border-2 border-green-200'
                       }`}
                     >
-                      <Clock className="w-4 h-4" />
+                      <Clock className={`w-4 h-4 ${prepMode ? 'animate-spin' : ''}`} />
                       {prepMode ? 'Prep Mode On' : 'Prep Mode'}
                     </button>
                     <button
                       onClick={viewMode === 'today' ? generateForecast : generateWeeklyForecast}
                       disabled={loading}
-                      className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
+                      className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold hover:shadow-xl hover:scale-105 active:scale-95 flex items-center gap-2"
                     >
+                      {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                       {loading ? 'Generating...' : `Generate ${viewMode === 'today' ? 'Forecast' : 'Weekly Forecast'}`}
                     </button>
                   </div>
@@ -478,30 +537,34 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 {viewMode === 'today' && forecast && (
                   <>
                     <div className="grid grid-cols-4 gap-4">
-                      <div className="bg-blue-50 rounded-lg p-4">
+                      <div className="bg-blue-50 rounded-lg p-4 animate-slideUp">
                         <div className="flex items-center gap-2 text-blue-700 mb-2">
                           <TrendingUp className="w-5 h-5" />
                           <span className="font-semibold">Peak Hours</span>
                         </div>
                         <p className="text-2xl font-bold text-blue-900">{forecast.peak_hours[0]}</p>
                       </div>
-                      <div className="bg-green-50 rounded-lg p-4">
+                      <div className="bg-green-50 rounded-lg p-4 animate-slideUp delay-100">
                         <div className="flex items-center gap-2 text-green-700 mb-2">
                           <CheckCircle className="w-5 h-5" />
                           <span className="font-semibold">Orders</span>
                         </div>
                         <p className="text-2xl font-bold text-green-900">
-                          {forecast.hourly_forecast.reduce((sum, h) => sum + h.predicted_orders, 0)}
+                          <AnimatedNumber
+                            value={forecast.hourly_forecast.reduce((sum, h) => sum + h.predicted_orders, 0)}
+                          />
                         </p>
                       </div>
-                      <div className="bg-purple-50 rounded-lg p-4">
+                      <div className="bg-purple-50 rounded-lg p-4 animate-slideUp delay-200">
                         <div className="flex items-center gap-2 text-purple-700 mb-2">
                           <DollarSign className="w-5 h-5" />
                           <span className="font-semibold">Revenue</span>
                         </div>
-                        <p className="text-2xl font-bold text-purple-900">${forecast.revenue_estimate}</p>
+                        <p className="text-2xl font-bold text-purple-900">
+                          <AnimatedNumber value={forecast.revenue_estimate} prefix="$" />
+                        </p>
                       </div>
-                      <div className="bg-amber-50 rounded-lg p-4">
+                      <div className="bg-amber-50 rounded-lg p-4 animate-slideUp delay-300">
                         <div className="flex items-center gap-2 text-amber-700 mb-2">
                           <AlertCircle className="w-5 h-5" />
                           <span className="font-semibold">Weather</span>
@@ -510,7 +573,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                       </div>
                     </div>
 
-                    <div className="bg-gray-50 rounded-lg p-6">
+                    <div className="bg-gray-50 rounded-lg p-6 animate-fadeIn">
                       <h3 className="text-lg font-semibold mb-4">Hourly Demand Forecast</h3>
                       <ResponsiveContainer width="100%" height={300}>
                         <BarChart data={forecast.hourly_forecast}>
@@ -518,18 +581,28 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                           <XAxis dataKey="hour" tickFormatter={(h) => `${h}:00`} />
                           <YAxis label={{ value: 'Orders', angle: -90, position: 'insideLeft' }} />
                           <Tooltip />
-                          <Bar dataKey="predicted_orders" fill="#3b82f6" name="Predicted Orders" />
+                          <Bar
+                            dataKey="predicted_orders"
+                            fill="#3b82f6"
+                            name="Predicted Orders"
+                            animationDuration={1000}
+                            animationBegin={0}
+                          />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
 
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                    <div className="bg-white border border-gray-200 rounded-lg p-6 animate-fadeIn">
                       <h3 className="text-lg font-semibold mb-4">
                         {prepMode ? 'Morning Prep Checklist' : 'Recommended Actions'}
                       </h3>
                       <ul className="space-y-3">
                         {forecast.actions.map((action, idx) => (
-                          <li key={idx} className="flex items-start gap-3">
+                          <li
+                            key={idx}
+                            className="flex items-start gap-3 animate-slideUp"
+                            style={{ animationDelay: `${idx * 100}ms` }}
+                          >
                             <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
                             <span className="text-gray-700">{action}</span>
                           </li>
@@ -542,21 +615,25 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 {viewMode === 'week' && weeklyForecast && (
                   <>
                     <div className="grid grid-cols-3 gap-4">
-                      <div className="bg-blue-50 rounded-lg p-4">
+                      <div className="bg-blue-50 rounded-lg p-4 animate-slideUp">
                         <div className="flex items-center gap-2 text-blue-700 mb-2">
                           <Calendar className="w-5 h-5" />
                           <span className="font-semibold">Total Orders</span>
                         </div>
-                        <p className="text-2xl font-bold text-blue-900">{weeklyForecast.week_summary.total_orders}</p>
+                        <p className="text-2xl font-bold text-blue-900">
+                          <AnimatedNumber value={weeklyForecast.week_summary.total_orders} />
+                        </p>
                       </div>
-                      <div className="bg-green-50 rounded-lg p-4">
+                      <div className="bg-green-50 rounded-lg p-4 animate-slideUp delay-100">
                         <div className="flex items-center gap-2 text-green-700 mb-2">
                           <DollarSign className="w-5 h-5" />
                           <span className="font-semibold">Week Revenue</span>
                         </div>
-                        <p className="text-2xl font-bold text-green-900">${weeklyForecast.week_summary.total_revenue.toLocaleString()}</p>
+                        <p className="text-2xl font-bold text-green-900">
+                          <AnimatedNumber value={weeklyForecast.week_summary.total_revenue} prefix="$" />
+                        </p>
                       </div>
-                      <div className="bg-purple-50 rounded-lg p-4">
+                      <div className="bg-purple-50 rounded-lg p-4 animate-slideUp delay-200">
                         <div className="flex items-center gap-2 text-purple-700 mb-2">
                           <TrendingUp className="w-5 h-5" />
                           <span className="font-semibold">Busiest Day</span>
@@ -565,7 +642,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                       </div>
                     </div>
 
-                    <div className="bg-gray-50 rounded-lg p-6">
+                    <div className="bg-gray-50 rounded-lg p-6 animate-fadeIn">
                       <h3 className="text-lg font-semibold mb-4">7-Day Forecast Overview</h3>
                       <ResponsiveContainer width="100%" height={300}>
                         <LineChart data={weeklyForecast.daily_forecasts}>
@@ -575,15 +652,37 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                           <YAxis yAxisId="right" orientation="right" label={{ value: 'Revenue ($)', angle: 90, position: 'insideRight' }} />
                           <Tooltip />
                           <Legend />
-                          <Line yAxisId="left" type="monotone" dataKey="predicted_orders" stroke="#3b82f6" strokeWidth={2} name="Orders" />
-                          <Line yAxisId="right" type="monotone" dataKey="revenue_estimate" stroke="#10b981" strokeWidth={2} name="Revenue" />
+                          <Line
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="predicted_orders"
+                            stroke="#3b82f6"
+                            strokeWidth={2}
+                            name="Orders"
+                            animationDuration={1500}
+                            animationBegin={0}
+                          />
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="revenue_estimate"
+                            stroke="#10b981"
+                            strokeWidth={2}
+                            name="Revenue"
+                            animationDuration={1500}
+                            animationBegin={200}
+                          />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
 
                     <div className="grid grid-cols-1 gap-3">
                       {weeklyForecast.daily_forecasts.map((day, idx) => (
-                        <div key={idx} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div
+                          key={idx}
+                          className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-all hover:scale-[1.01] animate-slideUp"
+                          style={{ animationDelay: `${idx * 50}ms` }}
+                        >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
                               <div className="text-center">
@@ -635,23 +734,33 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                   </>
                 )}
 
-                {!forecast && !weeklyForecast && (
+                {!forecast && !weeklyForecast && !loading && (
                   <div className="text-center py-12 text-gray-500">
                     Select a view mode and click "Generate" to analyze operations
                   </div>
                 )}
-              </div>
-            )}
 
-            {activeTab === 'inventory' && (
-              <div className="space-y-6">
+                {loading && <LoadingSkeleton />}
+                </motion.div>
+              )}
+
+              {activeTab === 'inventory' && (
+                <motion.div
+                  key="inventory"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                  className="space-y-6"
+                >
                 <div className="flex justify-between items-center">
                   <h2 className="text-2xl font-bold text-gray-900">Inventory Planning</h2>
                   <button
                     onClick={generateInventoryPlan}
                     disabled={loading}
-                    className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
+                    className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold hover:shadow-xl hover:scale-105 active:scale-95 flex items-center gap-2"
                   >
+                    {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                     {loading ? 'Analyzing...' : 'Generate Plan'}
                   </button>
                 </div>
@@ -677,9 +786,9 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                           <span className="text-sm text-gray-500">Par: {item.par_level}</span>
                         </div>
                         <div className="mt-2">
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div 
-                              className={`h-2 rounded-full ${
+                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              className={`h-2 rounded-full transition-all duration-500 ease-out ${
                                 (inventoryInputs[item.ingredient] / item.par_level) < 0.5 ? 'bg-red-600' :
                                 (inventoryInputs[item.ingredient] / item.par_level) < 0.8 ? 'bg-yellow-600' :
                                 'bg-green-600'
@@ -695,19 +804,25 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
 
                 {inventoryPlan && (
                   <>
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex justify-between items-center">
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex justify-between items-center animate-slideDown">
                       <p className="text-red-900 font-semibold">{inventoryPlan.status}</p>
                       <div className="text-right">
                         <p className="text-sm text-red-700">Estimated Cost</p>
-                        <p className="text-xl font-bold text-red-900">${inventoryPlan.cost_estimate}</p>
+                        <p className="text-xl font-bold text-red-900">
+                          <AnimatedNumber value={inventoryPlan.cost_estimate} prefix="$" />
+                        </p>
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                    <div className="bg-white border border-gray-200 rounded-lg p-6 animate-fadeIn">
                       <h3 className="text-lg font-semibold mb-4">Priority Buy List</h3>
                       <div className="space-y-3">
                         {inventoryPlan.buy_list.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-4 bg-gray-50 rounded-lg animate-slideUp hover:bg-gray-100 transition-colors"
+                            style={{ animationDelay: `${idx * 80}ms` }}
+                          >
                             <div className="flex-1">
                               <div className="flex items-center gap-3">
                                 <span className={`px-2 py-1 text-xs font-semibold rounded ${
@@ -729,11 +844,15 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                    <div className="bg-white border border-gray-200 rounded-lg p-6 animate-fadeIn">
                       <h3 className="text-lg font-semibold mb-4">Prep Tasks</h3>
                       <ul className="space-y-3">
                         {inventoryPlan.prep_tasks.map((task, idx) => (
-                          <li key={idx} className="flex items-start gap-3">
+                          <li
+                            key={idx}
+                            className="flex items-start gap-3 animate-slideUp"
+                            style={{ animationDelay: `${idx * 100}ms` }}
+                          >
                             <CheckCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                             <span className="text-gray-700">{task}</span>
                           </li>
@@ -743,23 +862,33 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                   </>
                 )}
 
-                {!inventoryPlan && (
+                {!inventoryPlan && !loading && (
                   <div className="text-center py-12 text-gray-500">
                     Update inventory levels and click "Generate Plan"
                   </div>
                 )}
-              </div>
-            )}
 
-            {activeTab === 'promo' && (
-              <div className="space-y-6">
+                {loading && <LoadingSkeleton />}
+                </motion.div>
+              )}
+
+              {activeTab === 'promo' && (
+                <motion.div
+                  key="promo"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                  className="space-y-6"
+                >
                 <div className="flex justify-between items-center">
                   <h2 className="text-2xl font-bold text-gray-900">Promotional Campaign Studio</h2>
                   <button
                     onClick={generatePromo}
                     disabled={loading}
-                    className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
+                    className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold hover:shadow-xl hover:scale-105 active:scale-95 flex items-center gap-2"
                   >
+                    {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                     {loading ? 'Generating...' : 'Generate Promo'}
                   </button>
                 </div>
@@ -792,8 +921,8 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 </div>
 
                 {promo && (
-                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-lg">
-                    <div className="bg-gradient-to-r from-red-600 via-orange-600 to-red-600 p-6 text-white relative overflow-hidden">
+                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-lg animate-scaleIn">
+                    <div className="bg-gradient-to-r from-red-600 via-orange-600 to-red-600 p-6 text-white relative overflow-hidden animate-fadeIn">
                       <div className="absolute inset-0 bg-black opacity-5"></div>
                       <div className="relative z-10">
                         <h3 className="text-2xl font-bold">{promo.offer_name}</h3>
@@ -815,13 +944,16 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                   </div>
                 )}
 
-                {!promo && (
+                {!promo && !loading && (
                   <div className="text-center py-12 text-gray-500">
                     Configure settings and click "Generate Promo" to create a campaign
                   </div>
                 )}
-              </div>
-            )}
+
+                {loading && <LoadingSkeleton />}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
