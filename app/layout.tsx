@@ -1,5 +1,6 @@
 import './globals.css'
 import type { Metadata } from 'next'
+import { AuthProvider } from '@/lib/AuthContext'
 
 export const metadata: Metadata = {
   title: 'PizzAI - AI-Powered Restaurant Operations',
@@ -13,7 +14,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   )
 }
