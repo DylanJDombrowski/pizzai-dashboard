@@ -194,9 +194,12 @@ Respond with ONLY the JSON object, no markdown or explanation.`
       const cleanText = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleanText);
       setForecast(parsed);
+
+      // Save forecast to localStorage
+      storageService.saveForecast(parsed, 'daily');
     } catch (err) {
       console.error("Forecast error:", err);
-      setForecast({
+      const fallbackForecast = {
         hourly_forecast: [
           { hour: 17, predicted_orders: 22, confidence: "medium" },
           { hour: 18, predicted_orders: 35, confidence: "high" },
@@ -216,7 +219,11 @@ Respond with ONLY the JSON object, no markdown or explanation.`
         ],
         weather_impact: "Light rain expected during peak hours may slightly reduce walk-in traffic",
         revenue_estimate: 1680
-      });
+      };
+      setForecast(fallbackForecast);
+
+      // Save fallback forecast to localStorage
+      storageService.saveForecast(fallbackForecast, 'daily');
     }
     setLoading(false);
   };
@@ -274,9 +281,12 @@ Respond with ONLY the JSON object.`
       const cleanText = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleanText);
       setWeeklyForecast(parsed);
+
+      // Save weekly forecast to localStorage
+      storageService.saveForecast(parsed, 'weekly');
     } catch (err) {
       console.error("Weekly forecast error:", err);
-      setWeeklyForecast({
+      const fallbackWeekly = {
         daily_forecasts: [
           { day: "Thu", date: "11/21", predicted_orders: 85, revenue_estimate: 1190, peak_window: "6-8 PM", weather_impact: "moderate", key_note: "Rain may reduce walk-ins" },
           { day: "Fri", date: "11/22", predicted_orders: 165, revenue_estimate: 2310, peak_window: "7-9 PM", weather_impact: "low", key_note: "Strong weekend start expected" },
@@ -296,7 +306,11 @@ Respond with ONLY the JSON object.`
             "Plan promotional campaign for Monday-Tuesday slow days"
           ]
         }
-      });
+      };
+      setWeeklyForecast(fallbackWeekly);
+
+      // Save fallback weekly forecast to localStorage
+      storageService.saveForecast(fallbackWeekly, 'weekly');
     }
     setLoading(false);
   };
@@ -472,6 +486,9 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
       });
 
       setCurrentSchedule(result.schedule);
+
+      // Save schedule to localStorage
+      storageService.saveSchedule(result.schedule);
     } catch (error) {
       console.error('Error generating schedule:', error);
     } finally {
@@ -535,7 +552,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
         <div className="bg-white rounded-2xl shadow-xl mb-6 overflow-hidden border border-red-100 animate-fade-in">
           <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-orange-50">
             <nav className="flex">
-              {['dashboard', 'scheduler', 'inventory', 'promo'].map((tab, index) => (
+              {['dashboard', 'scheduler', 'inventory', 'promo', 'history'].map((tab, index) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -548,7 +565,8 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 >
                   {tab === 'inventory' ? 'Inventory Planner' :
                    tab === 'promo' ? 'Promo Studio' :
-                   tab === 'scheduler' ? 'Staff Scheduler' : tab}
+                   tab === 'scheduler' ? 'Staff Scheduler' :
+                   tab === 'history' ? 'History & Analytics' : tab}
                 </button>
               ))}
             </nav>
