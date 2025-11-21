@@ -1,13 +1,16 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
-import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Plus, X, Pencil, Trash2, Calendar, Download, Target, Calculator, ShoppingCart, Award } from 'lucide-react';
+import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Plus, X, Pencil, Trash2, Calendar, Download, Target, Calculator, ShoppingCart, Award, LogOut, Loader2 } from 'lucide-react';
 import { getHourlyWeather, getWeeklyWeather, type HourlyWeather, type DailyWeather } from '@/lib/weatherService';
 import { getHighImpactEventsInNext } from '@/lib/specialEvents';
 import type { SpecialEvent } from '@/lib/schedulingTypes';
-import { storageService, type CustomPrepTask, type CustomInventoryItem, DAY_TAGS, type DayTag } from '@/lib/storageService';
+import { storageService, DAY_TAGS, type DayTag } from '@/lib/storageService';
+import { supabaseStorage, type CustomPrepTask, type CustomInventoryItem, type ActualDataRecord } from '@/lib/supabaseStorageService';
 import { analyticsService } from '@/lib/analyticsService';
+import { useAuth } from '@/lib/AuthContext';
 
 // Simplified type definitions
 interface DailyForecast {
@@ -48,10 +51,14 @@ const MOCK_DATA = {
 };
 
 const PizzAIDashboard = () => {
+  const router = useRouter();
+  const { user, loading: authLoading, signOut } = useAuth();
+
   const [activeTab, setActiveTab] = useState('today');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [forecast, setForecast] = useState<DailyForecast | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
   const [inventoryInputs, setInventoryInputs] = useState<Record<string, number>>(
     MOCK_DATA.inventory.reduce((acc, item) => ({
       ...acc,
@@ -74,6 +81,7 @@ const PizzAIDashboard = () => {
     tags: [] as DayTag[]
   });
   const [showCloseSuccess, setShowCloseSuccess] = useState(false);
+  const [hasExistingData, setHasExistingData] = useState(false);
   const [lastCloseResult, setLastCloseResult] = useState<{
     laborPercent: number;
     vsTarget: string;
@@ -87,6 +95,32 @@ const PizzAIDashboard = () => {
 
   // Food cost calculator state
   const [foodCostCalc, setFoodCostCalc] = useState({ revenue: '', foodCost: '' });
+
+  // Recent performance state (for async loading)
+  const [recentPerformance, setRecentPerformance] = useState<{
+    lastWeek: { orders: number; revenue: number; days: number };
+    orderChange: number;
+    revenueChange: number;
+    avgLaborPercent: number | null;
+    daysWithLaborTracked: number;
+    recentDays: { date: string; orders: number; revenue: number; laborPercent: number | null }[];
+  } | null>(null);
+
+  // Weekly progress state
+  const [weekProgress, setWeekProgress] = useState<{
+    goal: number; current: number; percentage: number; daysTracked: number
+  } | null>(null);
+
+  // Best day state
+  const [bestDay, setBestDay] = useState<{
+    date: string; orders: number; revenue: number; dayName: string
+  } | null>(null);
+
+  // Week comparison data state
+  const [weekComparison, setWeekComparison] = useState<{
+    thisWeek: { day: string; orders: number; revenue: number }[];
+    lastWeek: { day: string; orders: number; revenue: number }[];
+  } | null>(null);
 
   // Default hourly rate for labor cost calculation
   const AVG_HOURLY_RATE = 15; // $15/hour average
@@ -102,6 +136,20 @@ const PizzAIDashboard = () => {
   const [showAddItem, setShowAddItem] = useState(false);
   const [newItemForm, setNewItemForm] = useState({ ingredient: '', unit: 'lb', par_level: '' });
 
+  // Auth redirect
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login');
+    }
+  }, [authLoading, user, router]);
+
+  // Set user on storage service when authenticated
+  useEffect(() => {
+    if (user) {
+      supabaseStorage.setUser(user);
+    }
+  }, [user]);
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 60000);
     return () => clearInterval(timer);
@@ -109,25 +157,51 @@ const PizzAIDashboard = () => {
 
   // Load custom prep tasks, checked items, and inventory on mount
   useEffect(() => {
-    setCustomPrepTasks(storageService.getCustomPrepTasks());
-    setCheckedPrepItems(storageService.getCheckedPrepItems().checkedIds);
-    const savedInventory = storageService.getCustomInventory();
-    if (savedInventory.length > 0) {
-      setCustomInventory(savedInventory);
-    } else {
-      // Initialize with defaults if no custom inventory
-      const defaults: CustomInventoryItem[] = MOCK_DATA.inventory.map((item, idx) => ({
-        id: `default_${idx}`,
-        ingredient: item.ingredient,
-        unit: item.unit,
-        par_level: item.par_level,
-        on_hand: item.on_hand,
-        cost_per_unit: item.cost_per_unit,
-      }));
-      setCustomInventory(defaults);
-      storageService.saveCustomInventory(defaults);
-    }
-  }, []);
+    if (!user) return;
+
+    const loadData = async () => {
+      setDataLoading(true);
+      try {
+        // Load prep tasks from Supabase
+        const tasks = await supabaseStorage.getCustomPrepTasks();
+        setCustomPrepTasks(tasks);
+
+        // Load checked items from localStorage (daily state)
+        setCheckedPrepItems(supabaseStorage.getCheckedPrepItems().checkedIds);
+
+        // Load inventory from Supabase
+        const savedInventory = await supabaseStorage.getCustomInventory();
+        if (savedInventory.length > 0) {
+          setCustomInventory(savedInventory);
+        } else {
+          // Initialize with defaults if no custom inventory
+          const defaults: CustomInventoryItem[] = MOCK_DATA.inventory.map((item, idx) => ({
+            id: `default_${idx}`,
+            ingredient: item.ingredient,
+            unit: item.unit,
+            par_level: item.par_level,
+            on_hand: item.on_hand,
+            cost_per_unit: item.cost_per_unit,
+          }));
+          setCustomInventory(defaults);
+          // Save defaults to Supabase
+          for (const item of defaults) {
+            await supabaseStorage.addInventoryItem(item);
+          }
+        }
+
+        // Load weekly goal
+        const goal = await supabaseStorage.getWeeklyGoal();
+        if (goal) setWeeklyGoal(goal.revenue);
+      } catch (error) {
+        console.error('Error loading data:', error);
+      } finally {
+        setDataLoading(false);
+      }
+    };
+
+    loadData();
+  }, [user]);
 
   // Fetch weather and events on mount
   useEffect(() => {
@@ -158,34 +232,39 @@ const PizzAIDashboard = () => {
     }
   }, []);
 
-  // Load weekly goal and same day last week data
-  useEffect(() => {
-    const goal = storageService.getWeeklyGoal();
-    if (goal) setWeeklyGoal(goal.revenue);
-  }, []);
-
   // Update same day last week when date changes
   useEffect(() => {
-    const lastWeekData = storageService.getSameDayLastWeek(closeForm.date);
-    if (lastWeekData) {
-      setSameDayLastWeek({ orders: lastWeekData.actualOrders, revenue: lastWeekData.actualRevenue });
-    } else {
-      setSameDayLastWeek(null);
-    }
+    if (!user) return;
 
-    // Also load existing data for the selected date
-    const existingData = storageService.getActualDataByDate(closeForm.date);
-    if (existingData) {
-      setCloseForm(prev => ({
-        ...prev,
-        orders: existingData.actualOrders.toString(),
-        revenue: existingData.actualRevenue.toString(),
-        laborHours: existingData.laborHours?.toString() || '',
-        notes: existingData.notes || '',
-        tags: existingData.tags || []
-      }));
-    }
-  }, [closeForm.date]);
+    const loadDateData = async () => {
+      try {
+        const lastWeekData = await supabaseStorage.getSameDayLastWeek(closeForm.date);
+        if (lastWeekData) {
+          setSameDayLastWeek({ orders: lastWeekData.actualOrders, revenue: lastWeekData.actualRevenue });
+        } else {
+          setSameDayLastWeek(null);
+        }
+
+        // Also load existing data for the selected date
+        const existingData = await supabaseStorage.getActualDataByDate(closeForm.date);
+        setHasExistingData(!!existingData);
+        if (existingData) {
+          setCloseForm(prev => ({
+            ...prev,
+            orders: existingData.actualOrders.toString(),
+            revenue: existingData.actualRevenue.toString(),
+            laborHours: existingData.laborHours?.toString() || '',
+            notes: existingData.notes || '',
+            tags: existingData.tags || []
+          }));
+        }
+      } catch (error) {
+        console.error('Error loading date data:', error);
+      }
+    };
+
+    loadDateData();
+  }, [closeForm.date, user]);
 
   const generateTodayForecast = async () => {
     setLoading(true);
@@ -196,7 +275,9 @@ const PizzAIDashboard = () => {
       const isSunday = dayOfWeek === 0;
 
       // Check for historical data for this day of week
-      const historicalAverages = storageService.getAveragesByDayOfWeek();
+      const historicalAverages = user
+        ? await supabaseStorage.getAveragesByDayOfWeek()
+        : storageService.getAveragesByDayOfWeek();
       const dayData = historicalAverages[dayOfWeek];
 
       // Use historical data if available, otherwise use defaults
@@ -275,7 +356,7 @@ const PizzAIDashboard = () => {
     setLoading(false);
   };
 
-  const handleCloseDay = () => {
+  const handleCloseDay = async () => {
     if (!closeForm.orders || !closeForm.revenue) {
       alert('Please enter orders and revenue');
       return;
@@ -286,58 +367,71 @@ const PizzAIDashboard = () => {
     const laborHours = closeForm.laborHours ? parseFloat(closeForm.laborHours) : undefined;
     const laborCost = laborHours ? laborHours * AVG_HOURLY_RATE : undefined;
 
-    storageService.saveActualData(
-      closeForm.date,
-      orders,
-      revenue,
-      laborHours,
-      laborCost,
-      closeForm.notes,
-      closeForm.tags.length > 0 ? closeForm.tags : undefined
-    );
+    try {
+      await supabaseStorage.saveActualData(
+        closeForm.date,
+        orders,
+        revenue,
+        laborHours,
+        laborCost,
+        closeForm.notes,
+        closeForm.tags.length > 0 ? closeForm.tags : undefined
+      );
 
-    // Calculate labor % for feedback
-    if (laborHours && revenue > 0) {
-      const laborPercent = (laborCost! / revenue) * 100;
-      const diff = laborPercent - TARGET_LABOR_PERCENT;
-      const vsTarget = diff > 0
-        ? `${diff.toFixed(1)}% over target`
-        : diff < 0
-        ? `${Math.abs(diff).toFixed(1)}% under target`
-        : 'Right on target';
-      setLastCloseResult({ laborPercent, vsTarget });
-    } else {
-      setLastCloseResult(null);
+      // Calculate labor % for feedback
+      if (laborHours && revenue > 0) {
+        const laborPercent = (laborCost! / revenue) * 100;
+        const diff = laborPercent - TARGET_LABOR_PERCENT;
+        const vsTarget = diff > 0
+          ? `${diff.toFixed(1)}% over target`
+          : diff < 0
+          ? `${Math.abs(diff).toFixed(1)}% under target`
+          : 'Right on target';
+        setLastCloseResult({ laborPercent, vsTarget });
+      } else {
+        setLastCloseResult(null);
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+      setCloseForm({ date: today, orders: '', revenue: '', laborHours: '', notes: '', tags: [] });
+      setShowCloseSuccess(true);
+      setTimeout(() => {
+        setShowCloseSuccess(false);
+        setLastCloseResult(null);
+      }, 5000);
+    } catch (error) {
+      console.error('Error saving data:', error);
+      alert('Error saving data. Please try again.');
     }
-
-    const today = new Date().toISOString().split('T')[0];
-    setCloseForm({ date: today, orders: '', revenue: '', laborHours: '', notes: '', tags: [] });
-    setShowCloseSuccess(true);
-    setTimeout(() => {
-      setShowCloseSuccess(false);
-      setLastCloseResult(null);
-    }, 5000);
   };
 
-  const handleSaveWeeklyGoal = () => {
+  const handleSaveWeeklyGoal = async () => {
     const goal = parseFloat(goalInput);
     if (goal > 0) {
-      storageService.saveWeeklyGoal(goal);
-      setWeeklyGoal(goal);
-      setShowGoalInput(false);
-      setGoalInput('');
+      try {
+        await supabaseStorage.saveWeeklyGoal(goal);
+        setWeeklyGoal(goal);
+        setShowGoalInput(false);
+        setGoalInput('');
+      } catch (error) {
+        console.error('Error saving goal:', error);
+      }
     }
   };
 
-  const handleExportCSV = () => {
-    const csv = storageService.exportActualsToCSV();
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pizzai-data-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportCSV = async () => {
+    try {
+      const csv = await supabaseStorage.exportActualsToCSV();
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pizzai-data-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting CSV:', error);
+    }
   };
 
   const getInventoryStatus = (item: typeof MOCK_DATA.inventory[0]) => {
@@ -355,61 +449,85 @@ const PizzAIDashboard = () => {
     return <Sun className="w-6 h-6 text-yellow-500" />;
   };
 
-  // Get recent performance for Trends
-  const getRecentPerformance = () => {
-    const actuals = storageService.getActualData();
-    if (actuals.length === 0) return null;
+  // Load recent performance data
+  useEffect(() => {
+    if (!user) return;
 
-    const sorted = [...actuals].sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+    const loadPerformance = async () => {
+      try {
+        const actuals = await supabaseStorage.getActualData();
+        if (actuals.length === 0) {
+          setRecentPerformance(null);
+          return;
+        }
 
-    // Last 7 days
-    const lastWeek = sorted.slice(0, 7);
-    const prevWeek = sorted.slice(7, 14);
+        const sorted = [...actuals].sort((a, b) =>
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
 
-    if (lastWeek.length === 0) return null;
+        const lastWeek = sorted.slice(0, 7);
+        const prevWeek = sorted.slice(7, 14);
 
-    const lastWeekOrders = lastWeek.reduce((sum, d) => sum + d.actualOrders, 0);
-    const lastWeekRevenue = lastWeek.reduce((sum, d) => sum + d.actualRevenue, 0);
-    const prevWeekOrders = prevWeek.reduce((sum, d) => sum + d.actualOrders, 0);
-    const prevWeekRevenue = prevWeek.reduce((sum, d) => sum + d.actualRevenue, 0);
+        if (lastWeek.length === 0) {
+          setRecentPerformance(null);
+          return;
+        }
 
-    // Calculate labor stats
-    const daysWithLabor = lastWeek.filter(d => d.laborHours && d.laborCost);
-    const totalLaborCost = daysWithLabor.reduce((sum, d) => sum + (d.laborCost || 0), 0);
-    const totalRevenueWithLabor = daysWithLabor.reduce((sum, d) => sum + d.actualRevenue, 0);
-    const avgLaborPercent = totalRevenueWithLabor > 0
-      ? (totalLaborCost / totalRevenueWithLabor) * 100
-      : null;
+        const lastWeekOrders = lastWeek.reduce((sum, d) => sum + d.actualOrders, 0);
+        const lastWeekRevenue = lastWeek.reduce((sum, d) => sum + d.actualRevenue, 0);
+        const prevWeekOrders = prevWeek.reduce((sum, d) => sum + d.actualOrders, 0);
+        const prevWeekRevenue = prevWeek.reduce((sum, d) => sum + d.actualRevenue, 0);
 
-    const orderChange = prevWeekOrders > 0
-      ? ((lastWeekOrders - prevWeekOrders) / prevWeekOrders) * 100
-      : 0;
-    const revenueChange = prevWeekRevenue > 0
-      ? ((lastWeekRevenue - prevWeekRevenue) / prevWeekRevenue) * 100
-      : 0;
+        const daysWithLabor = lastWeek.filter(d => d.laborHours && d.laborCost);
+        const totalLaborCost = daysWithLabor.reduce((sum, d) => sum + (d.laborCost || 0), 0);
+        const totalRevenueWithLabor = daysWithLabor.reduce((sum, d) => sum + d.actualRevenue, 0);
+        const avgLaborPercent = totalRevenueWithLabor > 0
+          ? (totalLaborCost / totalRevenueWithLabor) * 100
+          : null;
 
-    return {
-      lastWeek: {
-        orders: lastWeekOrders,
-        revenue: lastWeekRevenue,
-        days: lastWeek.length
-      },
-      orderChange,
-      revenueChange,
-      avgLaborPercent,
-      daysWithLaborTracked: daysWithLabor.length,
-      recentDays: lastWeek.map(d => ({
-        date: d.date,
-        orders: d.actualOrders,
-        revenue: d.actualRevenue,
-        laborPercent: d.laborCost && d.actualRevenue > 0
-          ? (d.laborCost / d.actualRevenue) * 100
-          : null
-      }))
+        const orderChange = prevWeekOrders > 0
+          ? ((lastWeekOrders - prevWeekOrders) / prevWeekOrders) * 100
+          : 0;
+        const revenueChange = prevWeekRevenue > 0
+          ? ((lastWeekRevenue - prevWeekRevenue) / prevWeekRevenue) * 100
+          : 0;
+
+        setRecentPerformance({
+          lastWeek: {
+            orders: lastWeekOrders,
+            revenue: lastWeekRevenue,
+            days: lastWeek.length
+          },
+          orderChange,
+          revenueChange,
+          avgLaborPercent,
+          daysWithLaborTracked: daysWithLabor.length,
+          recentDays: lastWeek.map(d => ({
+            date: d.date,
+            orders: d.actualOrders,
+            revenue: d.actualRevenue,
+            laborPercent: d.laborCost && d.actualRevenue > 0
+              ? (d.laborCost / d.actualRevenue) * 100
+              : null
+          }))
+        });
+
+        // Also load week progress, best day, week comparison
+        const progress = await supabaseStorage.getWeekProgress();
+        setWeekProgress(progress);
+
+        const best = await supabaseStorage.getOverallBestDay();
+        setBestDay(best);
+
+        const comparison = await supabaseStorage.getWeekComparisonData();
+        setWeekComparison(comparison);
+      } catch (error) {
+        console.error('Error loading performance:', error);
+      }
     };
-  };
+
+    loadPerformance();
+  }, [user, showCloseSuccess]); // Reload when close day succeeds
 
   const tabs = [
     { id: 'today', label: 'Today', icon: Clock },
@@ -417,6 +535,30 @@ const PizzAIDashboard = () => {
     { id: 'close', label: 'Close Day', icon: ClipboardCheck },
     { id: 'trends', label: 'Trends', icon: BarChart3 }
   ];
+
+  // Loading state
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-yellow-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-red-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not authenticated - will redirect
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-yellow-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-red-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Redirecting to login...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-yellow-50">
@@ -433,14 +575,23 @@ const PizzAIDashboard = () => {
                 <p className="text-red-100 text-sm">Know what's coming</p>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-white font-semibold">
-                {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <div className="text-white font-semibold">
+                  {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                </div>
+                <div className="flex items-center gap-2 text-red-100 text-sm mt-1">
+                  <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
+                  <span>{hourlyWeather[0]?.temp_f || '--'}°F</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-red-100 text-sm mt-1">
-                <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
-                <span>{hourlyWeather[0]?.temp_f || '--'}°F</span>
-              </div>
+              <button
+                onClick={() => signOut()}
+                className="p-2 text-red-200 hover:text-white hover:bg-red-700 rounded-lg transition-colors"
+                title="Sign out"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
             </div>
           </div>
         </header>
@@ -630,22 +781,30 @@ const PizzAIDashboard = () => {
                     type="text"
                     value={newTaskInput}
                     onChange={(e) => setNewTaskInput(e.target.value)}
-                    onKeyDown={(e) => {
+                    onKeyDown={async (e) => {
                       if (e.key === 'Enter' && newTaskInput.trim()) {
-                        const newTask = storageService.addCustomPrepTask(newTaskInput.trim());
-                        setCustomPrepTasks([...customPrepTasks, newTask]);
-                        setNewTaskInput('');
+                        try {
+                          const newTask = await supabaseStorage.addCustomPrepTask(newTaskInput.trim());
+                          setCustomPrepTasks([...customPrepTasks, newTask]);
+                          setNewTaskInput('');
+                        } catch (error) {
+                          console.error('Error adding task:', error);
+                        }
                       }
                     }}
                     placeholder="Enter a recurring task..."
                     className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                   />
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (newTaskInput.trim()) {
-                        const newTask = storageService.addCustomPrepTask(newTaskInput.trim());
-                        setCustomPrepTasks([...customPrepTasks, newTask]);
-                        setNewTaskInput('');
+                        try {
+                          const newTask = await supabaseStorage.addCustomPrepTask(newTaskInput.trim());
+                          setCustomPrepTasks([...customPrepTasks, newTask]);
+                          setNewTaskInput('');
+                        } catch (error) {
+                          console.error('Error adding task:', error);
+                        }
                       }
                     }}
                     className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
@@ -673,11 +832,11 @@ const PizzAIDashboard = () => {
                     <li
                       key={itemId}
                       onClick={() => {
-                        const newChecked = storageService.togglePrepItemChecked(itemId);
-                        if (newChecked) {
-                          setCheckedPrepItems([...checkedPrepItems, itemId]);
-                        } else {
+                        supabaseStorage.togglePrepItemChecked(itemId);
+                        if (checkedPrepItems.includes(itemId)) {
                           setCheckedPrepItems(checkedPrepItems.filter(id => id !== itemId));
+                        } else {
+                          setCheckedPrepItems([...checkedPrepItems, itemId]);
                         }
                       }}
                       className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all ${
@@ -708,11 +867,11 @@ const PizzAIDashboard = () => {
                     >
                       <div
                         onClick={() => {
-                          const newChecked = storageService.togglePrepItemChecked(task.id);
-                          if (newChecked) {
-                            setCheckedPrepItems([...checkedPrepItems, task.id]);
-                          } else {
+                          supabaseStorage.togglePrepItemChecked(task.id);
+                          if (checkedPrepItems.includes(task.id)) {
                             setCheckedPrepItems(checkedPrepItems.filter(id => id !== task.id));
+                          } else {
+                            setCheckedPrepItems([...checkedPrepItems, task.id]);
                           }
                         }}
                         className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center cursor-pointer transition-colors ${
@@ -725,9 +884,13 @@ const PizzAIDashboard = () => {
                         {task.task}
                       </span>
                       <button
-                        onClick={() => {
-                          storageService.deleteCustomPrepTask(task.id);
-                          setCustomPrepTasks(customPrepTasks.filter(t => t.id !== task.id));
+                        onClick={async () => {
+                          try {
+                            await supabaseStorage.deleteCustomPrepTask(task.id);
+                            setCustomPrepTasks(customPrepTasks.filter(t => t.id !== task.id));
+                          } catch (error) {
+                            console.error('Error deleting task:', error);
+                          }
                         }}
                         className="p-1 text-gray-400 hover:text-red-500 transition-colors"
                         title="Delete task"
@@ -793,17 +956,21 @@ const PizzAIDashboard = () => {
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (newItemForm.ingredient && newItemForm.par_level) {
-                          const newItem = storageService.addInventoryItem({
-                            ingredient: newItemForm.ingredient,
-                            unit: newItemForm.unit,
-                            par_level: parseFloat(newItemForm.par_level),
-                            on_hand: 0
-                          });
-                          setCustomInventory([...customInventory, newItem]);
-                          setNewItemForm({ ingredient: '', unit: 'lb', par_level: '' });
-                          setShowAddItem(false);
+                          try {
+                            const newItem = await supabaseStorage.addInventoryItem({
+                              ingredient: newItemForm.ingredient,
+                              unit: newItemForm.unit,
+                              par_level: parseFloat(newItemForm.par_level),
+                              on_hand: 0
+                            });
+                            setCustomInventory([...customInventory, newItem]);
+                            setNewItemForm({ ingredient: '', unit: 'lb', par_level: '' });
+                            setShowAddItem(false);
+                          } catch (error) {
+                            console.error('Error adding item:', error);
+                          }
                         }
                       }}
                       className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
@@ -889,15 +1056,19 @@ const PizzAIDashboard = () => {
                           </div>
                           <div className="flex gap-2">
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 const name = (document.getElementById(`edit-name-${item.id}`) as HTMLInputElement).value;
                                 const unit = (document.getElementById(`edit-unit-${item.id}`) as HTMLSelectElement).value;
                                 const par = parseFloat((document.getElementById(`edit-par-${item.id}`) as HTMLInputElement).value);
-                                storageService.updateInventoryItem(item.id, { ingredient: name, unit, par_level: par });
-                                setCustomInventory(customInventory.map(i =>
-                                  i.id === item.id ? { ...i, ingredient: name, unit, par_level: par } : i
-                                ));
-                                setEditingItem(null);
+                                try {
+                                  await supabaseStorage.updateInventoryItem(item.id, { ingredient: name, unit, par_level: par });
+                                  setCustomInventory(customInventory.map(i =>
+                                    i.id === item.id ? { ...i, ingredient: name, unit, par_level: par } : i
+                                  ));
+                                  setEditingItem(null);
+                                } catch (error) {
+                                  console.error('Error updating item:', error);
+                                }
                               }}
                               className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
                             >
@@ -910,11 +1081,15 @@ const PizzAIDashboard = () => {
                               Cancel
                             </button>
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 if (confirm(`Delete ${item.ingredient}?`)) {
-                                  storageService.deleteInventoryItem(item.id);
-                                  setCustomInventory(customInventory.filter(i => i.id !== item.id));
-                                  setEditingItem(null);
+                                  try {
+                                    await supabaseStorage.deleteInventoryItem(item.id);
+                                    setCustomInventory(customInventory.filter(i => i.id !== item.id));
+                                    setEditingItem(null);
+                                  } catch (error) {
+                                    console.error('Error deleting item:', error);
+                                  }
                                 }
                               }}
                               className="px-3 py-1 text-red-600 hover:text-red-800 text-sm ml-auto"
@@ -968,12 +1143,17 @@ const PizzAIDashboard = () => {
                               <input
                                 type="number"
                                 value={item.on_hand}
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const newOnHand = parseFloat(e.target.value) || 0;
-                                  storageService.updateInventoryItem(item.id, { on_hand: newOnHand });
+                                  // Optimistic update
                                   setCustomInventory(customInventory.map(i =>
                                     i.id === item.id ? { ...i, on_hand: newOnHand } : i
                                   ));
+                                  try {
+                                    await supabaseStorage.updateInventoryItem(item.id, { on_hand: newOnHand });
+                                  } catch (error) {
+                                    console.error('Error updating item:', error);
+                                  }
                                 }}
                                 className="w-16 px-2 py-1 text-center border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                               />
@@ -1209,7 +1389,7 @@ const PizzAIDashboard = () => {
                   onClick={handleCloseDay}
                   className="w-full bg-red-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-red-700 transition-colors shadow-lg"
                 >
-                  {storageService.getActualDataByDate(closeForm.date) ? 'Update Day' : 'Close Day'}
+                  {hasExistingData ? 'Update Day' : 'Close Day'}
                 </button>
               </div>
             </div>
@@ -1220,7 +1400,7 @@ const PizzAIDashboard = () => {
         {activeTab === 'trends' && (
           <div className="space-y-4">
             {(() => {
-              const perf = getRecentPerformance();
+              const perf = recentPerformance;
 
               if (!perf) {
                 return (
@@ -1275,34 +1455,28 @@ const PizzAIDashboard = () => {
                       </div>
                     )}
 
-                    {(() => {
-                      const progress = storageService.getWeekProgress();
-                      if (!progress) {
-                        return (
-                          <p className="text-gray-500 text-sm">Set a weekly revenue goal to track progress</p>
-                        );
-                      }
-                      return (
-                        <div>
-                          <div className="flex justify-between text-sm mb-2">
-                            <span className="text-gray-600">${progress.current.toLocaleString()} of ${progress.goal.toLocaleString()}</span>
-                            <span className={`font-semibold ${progress.percentage >= 100 ? 'text-green-600' : 'text-gray-700'}`}>
-                              {progress.percentage}%
-                            </span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-4">
-                            <div
-                              className={`h-4 rounded-full transition-all ${progress.percentage >= 100 ? 'bg-green-500' : 'bg-red-500'}`}
-                              style={{ width: `${Math.min(progress.percentage, 100)}%` }}
-                            />
-                          </div>
-                          <div className="text-xs text-gray-500 mt-2">
-                            {progress.daysTracked} days tracked this week
-                            {progress.percentage >= 100 && ' - Goal reached!'}
-                          </div>
+                    {weekProgress ? (
+                      <div>
+                        <div className="flex justify-between text-sm mb-2">
+                          <span className="text-gray-600">${weekProgress.current.toLocaleString()} of ${weekProgress.goal.toLocaleString()}</span>
+                          <span className={`font-semibold ${weekProgress.percentage >= 100 ? 'text-green-600' : 'text-gray-700'}`}>
+                            {weekProgress.percentage}%
+                          </span>
                         </div>
-                      );
-                    })()}
+                        <div className="w-full bg-gray-200 rounded-full h-4">
+                          <div
+                            className={`h-4 rounded-full transition-all ${weekProgress.percentage >= 100 ? 'bg-green-500' : 'bg-red-500'}`}
+                            style={{ width: `${Math.min(weekProgress.percentage, 100)}%` }}
+                          />
+                        </div>
+                        <div className="text-xs text-gray-500 mt-2">
+                          {weekProgress.daysTracked} days tracked this week
+                          {weekProgress.percentage >= 100 && ' - Goal reached!'}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-gray-500 text-sm">Set a weekly revenue goal to track progress</p>
+                    )}
                   </div>
 
                   {/* Week Performance */}
@@ -1365,32 +1539,28 @@ const PizzAIDashboard = () => {
                   )}
 
                   {/* Best Day Insights */}
-                  {(() => {
-                    const bestDay = storageService.getOverallBestDay();
-                    if (!bestDay) return null;
-                    return (
-                      <div className="bg-gradient-to-r from-yellow-50 to-amber-50 rounded-xl shadow-md p-6">
-                        <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                          <Award className="w-5 h-5 text-amber-500" />
-                          Best Day Record
-                        </h2>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-3xl font-bold text-amber-700">{bestDay.orders} orders</div>
-                            <div className="text-sm text-gray-600 mt-1">
-                              ${bestDay.revenue.toLocaleString()} revenue
-                            </div>
+                  {bestDay && (
+                    <div className="bg-gradient-to-r from-yellow-50 to-amber-50 rounded-xl shadow-md p-6">
+                      <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                        <Award className="w-5 h-5 text-amber-500" />
+                        Best Day Record
+                      </h2>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-3xl font-bold text-amber-700">{bestDay.orders} orders</div>
+                          <div className="text-sm text-gray-600 mt-1">
+                            ${bestDay.revenue.toLocaleString()} revenue
                           </div>
-                          <div className="text-right">
-                            <div className="text-lg font-semibold text-amber-600">{bestDay.dayName}</div>
-                            <div className="text-sm text-gray-500">
-                              {new Date(bestDay.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-semibold text-amber-600">{bestDay.dayName}</div>
+                          <div className="text-sm text-gray-500">
+                            {new Date(bestDay.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                           </div>
                         </div>
                       </div>
-                    );
-                  })()}
+                    </div>
+                  )}
 
                   {/* Food Cost Calculator */}
                   <div className="bg-white rounded-xl shadow-md p-6">
@@ -1452,34 +1622,26 @@ const PizzAIDashboard = () => {
                   </div>
 
                   {/* Week-over-Week Comparison Chart */}
-                  {(() => {
-                    const comparison = storageService.getWeekComparisonData();
-                    const hasData = comparison.thisWeek.some(d => d.orders > 0) || comparison.lastWeek.some(d => d.orders > 0);
-                    if (!hasData) return null;
-
-                    const chartData = comparison.thisWeek.map((d, i) => ({
-                      day: d.day,
-                      thisWeek: d.orders,
-                      lastWeek: comparison.lastWeek[i]?.orders || 0
-                    }));
-
-                    return (
-                      <div className="bg-white rounded-xl shadow-md p-6">
-                        <h3 className="text-lg font-semibold text-gray-700 mb-4">This Week vs Last Week</h3>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <LineChart data={chartData}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                            <XAxis dataKey="day" />
-                            <YAxis />
-                            <Tooltip />
-                            <Legend />
-                            <Line type="monotone" dataKey="thisWeek" stroke="#dc2626" strokeWidth={2} name="This Week" dot={{ fill: '#dc2626' }} />
-                            <Line type="monotone" dataKey="lastWeek" stroke="#9ca3af" strokeWidth={2} name="Last Week" dot={{ fill: '#9ca3af' }} strokeDasharray="5 5" />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    );
-                  })()}
+                  {weekComparison && (weekComparison.thisWeek.some(d => d.orders > 0) || weekComparison.lastWeek.some(d => d.orders > 0)) && (
+                    <div className="bg-white rounded-xl shadow-md p-6">
+                      <h3 className="text-lg font-semibold text-gray-700 mb-4">This Week vs Last Week</h3>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <LineChart data={weekComparison.thisWeek.map((d, i) => ({
+                          day: d.day,
+                          thisWeek: d.orders,
+                          lastWeek: weekComparison.lastWeek[i]?.orders || 0
+                        }))}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="day" />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Line type="monotone" dataKey="thisWeek" stroke="#dc2626" strokeWidth={2} name="This Week" dot={{ fill: '#dc2626' }} />
+                          <Line type="monotone" dataKey="lastWeek" stroke="#9ca3af" strokeWidth={2} name="Last Week" dot={{ fill: '#9ca3af' }} strokeDasharray="5 5" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
 
                   {/* Recent Days */}
                   <div className="bg-white rounded-xl shadow-md p-6">
