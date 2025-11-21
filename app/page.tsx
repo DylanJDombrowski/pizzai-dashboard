@@ -4,6 +4,49 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
 import { Cloud, CloudRain, Sun, TrendingUp, AlertCircle, CheckCircle, Calendar, Clock, DollarSign, Pizza, Sparkles } from 'lucide-react';
 
+// --- ADD THESE TYPE DEFINITIONS ---
+interface Forecast {
+  hourly_forecast: { hour: number; predicted_orders: number; confidence: string }[];
+  peak_hours: string[];
+  actions: string[];
+  weather_impact: string;
+  revenue_estimate: number;
+}
+
+interface WeeklyForecast {
+  daily_forecasts: {
+    day: string;
+    date: string;
+    predicted_orders: number;
+    revenue_estimate: number;
+    peak_window: string;
+    weather_impact: string;
+    key_note: string;
+  }[];
+  week_summary: {
+    total_orders: number;
+    total_revenue: number;
+    busiest_day: string;
+    prep_priorities: string[];
+  };
+}
+
+interface InventoryPlan {
+  buy_list: { ingredient: string; quantity: number; unit: string; priority: string; reason: string }[];
+  prep_tasks: string[];
+  status: string;
+  cost_estimate: number;
+}
+
+interface Promo {
+  offer_name: string;
+  copy_short: string;
+  copy_email: string;
+  discount: string;
+  target_lift: string;
+}
+// --- END OF TYPE DEFINITIONS ---
+
 const MOCK_DATA = {
   sales_history: [
     { date: "2025-11-20", hour: 17, sku: "Pepperoni", orders: 18, price: 14.00 },
@@ -40,10 +83,12 @@ const MOCK_DATA = {
 const PizzAIDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [forecast, setForecast] = useState(null);
-  const [weeklyForecast, setWeeklyForecast] = useState(null);
-  const [inventoryPlan, setInventoryPlan] = useState(null);
-  const [promo, setPromo] = useState(null);
+  // --- USE GENERICS FOR STATE VARIABLES ---
+  const [forecast, setForecast] = useState<Forecast | null>(null);
+  const [weeklyForecast, setWeeklyForecast] = useState<WeeklyForecast | null>(null);
+  const [inventoryPlan, setInventoryPlan] = useState<InventoryPlan | null>(null);
+  const [promo, setPromo] = useState<Promo | null>(null);
+  // -----------------------------------------
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState('today'); // 'today' or 'week'
   const [prepMode, setPrepMode] = useState(false);
