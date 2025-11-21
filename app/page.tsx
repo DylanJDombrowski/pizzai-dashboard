@@ -92,7 +92,8 @@ const PizzAIDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState('today'); // 'today' or 'week'
   const [prepMode, setPrepMode] = useState(false);
-  const [inventoryInputs, setInventoryInputs] = useState(
+  const [inventoryInputs, setInventoryInputs] = useState<Record<string, number>>(
+
     MOCK_DATA.inventory.reduce((acc, item) => ({
       ...acc,
       [item.ingredient]: item.on_hand
