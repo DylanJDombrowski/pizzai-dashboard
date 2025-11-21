@@ -4,6 +4,15 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
 import { Cloud, CloudRain, Sun, TrendingUp, AlertCircle, CheckCircle, Calendar, Clock, DollarSign, Pizza, Sparkles } from 'lucide-react';
 import { getHourlyWeather, getWeeklyWeather, type HourlyWeather, type DailyWeather } from '@/lib/weatherService';
+import {
+  generateAISchedule,
+  exportScheduleToCSV,
+  getWeekStartDate,
+  getWeekDates,
+  MOCK_EMPLOYEES
+} from '@/lib/schedulingService';
+import { getEventsForDateRange, getHighImpactEventsInNext } from '@/lib/specialEvents';
+import type { Employee, Schedule, SpecialEvent } from '@/lib/schedulingTypes';
 
 // --- ADD THESE TYPE DEFINITIONS ---
 interface Forecast {
@@ -109,6 +118,12 @@ const PizzAIDashboard = () => {
   const [hourlyWeather, setHourlyWeather] = useState<HourlyWeather[]>(MOCK_DATA.weather);
   const [weeklyWeather, setWeeklyWeather] = useState<DailyWeather[]>(MOCK_DATA.weekly_weather);
   const [weatherLoading, setWeatherLoading] = useState(true);
+
+  // Scheduling state
+  const [employees, setEmployees] = useState<Employee[]>(MOCK_EMPLOYEES);
+  const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [upcomingEvents, setUpcomingEvents] = useState<SpecialEvent[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 60000);
@@ -401,6 +416,79 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
     setLoading(false);
   };
 
+  const generateSchedule = async () => {
+    setScheduleLoading(true);
+    try {
+      // Get current week's Monday
+      const weekStart = getWeekStartDate(new Date());
+      const weekDates = getWeekDates(weekStart);
+
+      // Get events for the week
+      const events = getEventsForDateRange(weekStart, weekDates[6]);
+      setUpcomingEvents(events);
+
+      // Get or generate weekly forecast if not available
+      let weeklyData = weeklyForecast;
+      if (!weeklyData) {
+        await generateWeeklyForecast();
+        weeklyData = weeklyForecast; // Use the newly generated forecast
+      }
+
+      // Prepare forecast data in the format needed for scheduling
+      const forecastData = {
+        daily: weekDates.map((date, index) => {
+          const dayForecast = weeklyData?.daily_forecasts?.[index];
+          return {
+            date,
+            predictedOrders: dayForecast?.predicted_orders || 100,
+            revenueEstimate: dayForecast?.revenue_estimate || 1400,
+            peakWindow: dayForecast?.peak_window || '6-8 PM',
+          };
+        }),
+      };
+
+      // Generate schedule
+      const result = await generateAISchedule({
+        weekStartDate: weekStart,
+        employees,
+        forecasts: forecastData,
+        specialEvents: events,
+        constraints: {
+          maxLaborCostPercent: 30, // Target 30% labor cost
+          minCoverage: {
+            cook: 1,
+            server: 1,
+            delivery: 1,
+            prep: 1,
+            manager: 1,
+          },
+          preferredShiftLengths: {
+            min: 4,
+            max: 8,
+          },
+        },
+      });
+
+      setCurrentSchedule(result.schedule);
+    } catch (error) {
+      console.error('Error generating schedule:', error);
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const handleExportSchedule = () => {
+    if (!currentSchedule) return;
+    const csv = exportScheduleToCSV(currentSchedule, employees);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `schedule_${currentSchedule.weekStartDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const WeatherIcon = ({ condition }) => {
     if (condition.includes('Rain')) return <CloudRain className="w-5 h-5 text-blue-500" />;
     if (condition.includes('Cloud')) return <Cloud className="w-5 h-5 text-gray-500" />;
@@ -442,7 +530,7 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
         <div className="bg-white rounded-xl shadow-lg mb-6 overflow-hidden border border-red-100">
           <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-orange-50">
             <nav className="flex">
-              {['dashboard', 'inventory', 'promo'].map((tab) => (
+              {['dashboard', 'scheduler', 'inventory', 'promo'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -452,7 +540,9 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                       : 'text-gray-600 hover:text-red-600 hover:bg-white/50'
                   }`}
                 >
-                  {tab === 'inventory' ? 'Inventory Planner' : tab === 'promo' ? 'Promo Studio' : tab}
+                  {tab === 'inventory' ? 'Inventory Planner' :
+                   tab === 'promo' ? 'Promo Studio' :
+                   tab === 'scheduler' ? 'Staff Scheduler' : tab}
                 </button>
               ))}
             </nav>
@@ -774,6 +864,211 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                 {!inventoryPlan && (
                   <div className="text-center py-12 text-gray-500">
                     Update inventory levels and click "Generate Plan"
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'scheduler' && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold text-gray-900">Staff Scheduler</h2>
+                  <div className="flex gap-3">
+                    {currentSchedule && (
+                      <button
+                        onClick={handleExportSchedule}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold"
+                      >
+                        Export CSV
+                      </button>
+                    )}
+                    <button
+                      onClick={generateSchedule}
+                      disabled={scheduleLoading}
+                      className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
+                    >
+                      {scheduleLoading ? 'Generating...' : 'Generate Schedule'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Upcoming Events Alert */}
+                {upcomingEvents.length > 0 && (
+                  <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-lg">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
+                      <div>
+                        <h3 className="font-semibold text-amber-900">Upcoming Special Events</h3>
+                        <div className="mt-2 space-y-1">
+                          {upcomingEvents.map((event) => (
+                            <div key={event.id} className="text-sm text-amber-800">
+                              <span className="font-medium">{event.name}</span> on {new Date(event.date).toLocaleDateString()} -
+                              <span className={`ml-1 font-semibold ${
+                                event.impact === 'very_high' ? 'text-red-600' :
+                                event.impact === 'high' ? 'text-orange-600' :
+                                'text-yellow-600'
+                              }`}>
+                                {event.impactMultiplier}x demand
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Employee Summary */}
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h3 className="text-lg font-semibold mb-4">Staff Overview</h3>
+                  <div className="grid grid-cols-5 gap-4">
+                    {['cook', 'server', 'delivery', 'prep', 'manager'].map((role) => {
+                      const count = employees.filter((emp) => emp.role === role && emp.active).length;
+                      return (
+                        <div key={role} className="bg-white rounded-lg p-4 border border-gray-200">
+                          <div className="text-2xl font-bold text-gray-900">{count}</div>
+                          <div className="text-sm text-gray-600 capitalize">{role}s</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Schedule Display */}
+                {currentSchedule ? (
+                  <>
+                    {/* Labor Cost Summary */}
+                    <div className="grid grid-cols-4 gap-4">
+                      <div className="bg-blue-50 rounded-lg p-4">
+                        <div className="text-sm text-blue-700 mb-1">Total Hours</div>
+                        <div className="text-2xl font-bold text-blue-900">{currentSchedule.totalLaborHours}</div>
+                      </div>
+                      <div className="bg-green-50 rounded-lg p-4">
+                        <div className="text-sm text-green-700 mb-1">Labor Cost</div>
+                        <div className="text-2xl font-bold text-green-900">${currentSchedule.totalLaborCost.toFixed(0)}</div>
+                      </div>
+                      <div className="bg-purple-50 rounded-lg p-4">
+                        <div className="text-sm text-purple-700 mb-1">Projected Revenue</div>
+                        <div className="text-2xl font-bold text-purple-900">${currentSchedule.projectedRevenue.toFixed(0)}</div>
+                      </div>
+                      <div className={`rounded-lg p-4 ${
+                        currentSchedule.laborPercentage <= 30 ? 'bg-green-50' :
+                        currentSchedule.laborPercentage <= 35 ? 'bg-yellow-50' :
+                        'bg-red-50'
+                      }`}>
+                        <div className={`text-sm mb-1 ${
+                          currentSchedule.laborPercentage <= 30 ? 'text-green-700' :
+                          currentSchedule.laborPercentage <= 35 ? 'text-yellow-700' :
+                          'text-red-700'
+                        }`}>Labor %</div>
+                        <div className={`text-2xl font-bold ${
+                          currentSchedule.laborPercentage <= 30 ? 'text-green-900' :
+                          currentSchedule.laborPercentage <= 35 ? 'text-yellow-900' :
+                          'text-red-900'
+                        }`}>{currentSchedule.laborPercentage.toFixed(1)}%</div>
+                      </div>
+                    </div>
+
+                    {/* Weekly Schedule Grid */}
+                    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="p-4 bg-gray-50 border-b border-gray-200">
+                        <h3 className="text-lg font-semibold">
+                          Week of {new Date(currentSchedule.weekStartDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                        </h3>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Employee</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Role</th>
+                              {getWeekDates(currentSchedule.weekStartDate).map((date) => (
+                                <th key={date} className="px-4 py-3 text-center text-sm font-semibold text-gray-700">
+                                  <div>{new Date(date).toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                                  <div className="text-xs text-gray-500">{new Date(date).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>
+                                </th>
+                              ))}
+                              <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700">Total Hours</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-200">
+                            {employees.filter(emp => emp.active).map((employee) => {
+                              const employeeShifts = currentSchedule.shifts.filter((s) => s.employeeId === employee.id);
+                              const weekDates = getWeekDates(currentSchedule.weekStartDate);
+                              const totalHours = employeeShifts.reduce((sum, shift) => {
+                                const [startH, startM] = shift.startTime.split(':').map(Number);
+                                const [endH, endM] = shift.endTime.split(':').map(Number);
+                                return sum + (endH - startH + (endM - startM) / 60);
+                              }, 0);
+
+                              if (employeeShifts.length === 0) return null;
+
+                              return (
+                                <tr key={employee.id} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{employee.name}</td>
+                                  <td className="px-4 py-3 text-sm text-gray-600 capitalize">{employee.role}</td>
+                                  {weekDates.map((date) => {
+                                    const shift = employeeShifts.find((s) => s.date === date);
+                                    return (
+                                      <td key={date} className="px-2 py-3 text-center">
+                                        {shift ? (
+                                          <div className="text-xs bg-blue-100 text-blue-900 rounded px-2 py-1">
+                                            <div className="font-semibold">{shift.startTime}-{shift.endTime}</div>
+                                            <div className="text-[10px] text-blue-700 capitalize">{shift.shiftType.replace('_', ' ')}</div>
+                                          </div>
+                                        ) : (
+                                          <span className="text-gray-300">-</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                  <td className="px-4 py-3 text-center text-sm font-semibold text-gray-900">
+                                    {totalHours.toFixed(1)}h
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Daily Breakdown */}
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                      <h3 className="text-lg font-semibold mb-4">Daily Coverage</h3>
+                      <div className="grid grid-cols-7 gap-3">
+                        {getWeekDates(currentSchedule.weekStartDate).map((date) => {
+                          const dayShifts = currentSchedule.shifts.filter((s) => s.date === date);
+                          const uniqueStaff = new Set(dayShifts.map((s) => s.employeeId)).size;
+                          const totalHours = dayShifts.reduce((sum, shift) => {
+                            const [startH, startM] = shift.startTime.split(':').map(Number);
+                            const [endH, endM] = shift.endTime.split(':').map(Number);
+                            return sum + (endH - startH + (endM - startM) / 60);
+                          }, 0);
+
+                          return (
+                            <div key={date} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                              <div className="text-sm font-semibold text-gray-900 mb-2">
+                                {new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })}
+                              </div>
+                              <div className="space-y-1 text-xs text-gray-600">
+                                <div>{uniqueStaff} staff</div>
+                                <div>{totalHours.toFixed(1)} hours</div>
+                                <div className="text-[10px] text-gray-500">
+                                  {dayShifts.filter(s => s.role === 'cook').length}C {dayShifts.filter(s => s.role === 'server').length}S {dayShifts.filter(s => s.role === 'delivery').length}D
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-12 text-gray-500">
+                    <Calendar className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                    <p className="text-lg">Click "Generate Schedule" to create an AI-optimized staff schedule</p>
+                    <p className="text-sm mt-2">Schedule will account for demand forecasts, weather, and special events</p>
                   </div>
                 )}
               </div>
