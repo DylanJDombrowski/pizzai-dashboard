@@ -13,6 +13,8 @@ import {
 } from '@/lib/schedulingService';
 import { getEventsForDateRange, getHighImpactEventsInNext } from '@/lib/specialEvents';
 import type { Employee, Schedule, SpecialEvent } from '@/lib/schedulingTypes';
+import { storageService } from '@/lib/storageService';
+import { analyticsService } from '@/lib/analyticsService';
 
 // --- ADD THESE TYPE DEFINITIONS ---
 interface Forecast {
