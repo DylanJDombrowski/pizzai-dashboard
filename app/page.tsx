@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Plus, X, Pencil, Trash2 } from 'lucide-react';
+import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Plus, X, Pencil, Trash2, Calendar, Download, Target } from 'lucide-react';
 import { getHourlyWeather, getWeeklyWeather, type HourlyWeather, type DailyWeather } from '@/lib/weatherService';
 import { getHighImpactEventsInNext } from '@/lib/specialEvents';
 import type { SpecialEvent } from '@/lib/schedulingTypes';
-import { storageService, type CustomPrepTask, type CustomInventoryItem } from '@/lib/storageService';
+import { storageService, type CustomPrepTask, type CustomInventoryItem, DAY_TAGS, type DayTag } from '@/lib/storageService';
 import { analyticsService } from '@/lib/analyticsService';
 
 // Simplified type definitions
@@ -66,16 +66,24 @@ const PizzAIDashboard = () => {
 
   // Close Day state
   const [closeForm, setCloseForm] = useState({
+    date: new Date().toISOString().split('T')[0],
     orders: '',
     revenue: '',
     laborHours: '',
-    notes: ''
+    notes: '',
+    tags: [] as DayTag[]
   });
   const [showCloseSuccess, setShowCloseSuccess] = useState(false);
   const [lastCloseResult, setLastCloseResult] = useState<{
     laborPercent: number;
     vsTarget: string;
   } | null>(null);
+  const [sameDayLastWeek, setSameDayLastWeek] = useState<{ orders: number; revenue: number } | null>(null);
+
+  // Weekly goal state
+  const [weeklyGoal, setWeeklyGoal] = useState<number | null>(null);
+  const [showGoalInput, setShowGoalInput] = useState(false);
+  const [goalInput, setGoalInput] = useState('');
 
   // Default hourly rate for labor cost calculation
   const AVG_HOURLY_RATE = 15; // $15/hour average
@@ -146,6 +154,35 @@ const PizzAIDashboard = () => {
       generateTodayForecast();
     }
   }, []);
+
+  // Load weekly goal and same day last week data
+  useEffect(() => {
+    const goal = storageService.getWeeklyGoal();
+    if (goal) setWeeklyGoal(goal.revenue);
+  }, []);
+
+  // Update same day last week when date changes
+  useEffect(() => {
+    const lastWeekData = storageService.getSameDayLastWeek(closeForm.date);
+    if (lastWeekData) {
+      setSameDayLastWeek({ orders: lastWeekData.actualOrders, revenue: lastWeekData.actualRevenue });
+    } else {
+      setSameDayLastWeek(null);
+    }
+
+    // Also load existing data for the selected date
+    const existingData = storageService.getActualDataByDate(closeForm.date);
+    if (existingData) {
+      setCloseForm(prev => ({
+        ...prev,
+        orders: existingData.actualOrders.toString(),
+        revenue: existingData.actualRevenue.toString(),
+        laborHours: existingData.laborHours?.toString() || '',
+        notes: existingData.notes || '',
+        tags: existingData.tags || []
+      }));
+    }
+  }, [closeForm.date]);
 
   const generateTodayForecast = async () => {
     setLoading(true);
@@ -241,19 +278,19 @@ const PizzAIDashboard = () => {
       return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
     const orders = parseInt(closeForm.orders);
     const revenue = parseFloat(closeForm.revenue);
     const laborHours = closeForm.laborHours ? parseFloat(closeForm.laborHours) : undefined;
     const laborCost = laborHours ? laborHours * AVG_HOURLY_RATE : undefined;
 
     storageService.saveActualData(
-      today,
+      closeForm.date,
       orders,
       revenue,
       laborHours,
       laborCost,
-      closeForm.notes
+      closeForm.notes,
+      closeForm.tags.length > 0 ? closeForm.tags : undefined
     );
 
     // Calculate labor % for feedback
@@ -270,12 +307,34 @@ const PizzAIDashboard = () => {
       setLastCloseResult(null);
     }
 
-    setCloseForm({ orders: '', revenue: '', laborHours: '', notes: '' });
+    const today = new Date().toISOString().split('T')[0];
+    setCloseForm({ date: today, orders: '', revenue: '', laborHours: '', notes: '', tags: [] });
     setShowCloseSuccess(true);
     setTimeout(() => {
       setShowCloseSuccess(false);
       setLastCloseResult(null);
     }, 5000);
+  };
+
+  const handleSaveWeeklyGoal = () => {
+    const goal = parseFloat(goalInput);
+    if (goal > 0) {
+      storageService.saveWeeklyGoal(goal);
+      setWeeklyGoal(goal);
+      setShowGoalInput(false);
+      setGoalInput('');
+    }
+  };
+
+  const handleExportCSV = () => {
+    const csv = storageService.exportActualsToCSV();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pizzai-data-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const getInventoryStatus = (item: typeof MOCK_DATA.inventory[0]) => {
@@ -932,8 +991,30 @@ const PizzAIDashboard = () => {
         {activeTab === 'close' && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl shadow-md p-6">
-              <h2 className="text-lg font-semibold text-gray-700 mb-2">Close Out Today</h2>
-              <p className="text-gray-500 text-sm mb-6">Track your actual numbers to improve future predictions</p>
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-700">Close Out Day</h2>
+                  <p className="text-gray-500 text-sm">Track your actual numbers to improve predictions</p>
+                </div>
+                {/* Date Picker */}
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-gray-400" />
+                  <input
+                    type="date"
+                    value={closeForm.date}
+                    max={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setCloseForm({ ...closeForm, date: e.target.value, orders: '', revenue: '', laborHours: '', notes: '', tags: [] })}
+                    className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Show which day we're entering for */}
+              {closeForm.date !== new Date().toISOString().split('T')[0] && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-sm text-amber-800">
+                  Entering data for: {new Date(closeForm.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                </div>
+              )}
 
               {showCloseSuccess && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
@@ -944,7 +1025,7 @@ const PizzAIDashboard = () => {
                   {lastCloseResult && (
                     <div className="mt-3 pt-3 border-t border-green-200">
                       <div className="flex items-center justify-between">
-                        <span className="text-green-700">Today's Labor Cost:</span>
+                        <span className="text-green-700">Labor Cost:</span>
                         <span className={`font-bold ${
                           lastCloseResult.laborPercent <= TARGET_LABOR_PERCENT ? 'text-green-700' : 'text-amber-600'
                         }`}>
@@ -957,46 +1038,67 @@ const PizzAIDashboard = () => {
                 </div>
               )}
 
-              {/* Comparison with forecast */}
-              {forecast && (
-                <div className="bg-blue-50 rounded-lg p-4 mb-6">
-                  <div className="text-sm text-blue-700 mb-1">Today's Forecast</div>
+              {/* Same Day Last Week Comparison */}
+              {sameDayLastWeek && (
+                <div className="bg-purple-50 rounded-lg p-4 mb-4">
+                  <div className="text-sm text-purple-700 mb-1">Same day last week</div>
                   <div className="flex gap-6">
                     <div>
-                      <span className="text-2xl font-bold text-blue-900">{forecast.expected_orders}</span>
-                      <span className="text-blue-700 ml-1">orders</span>
+                      <span className="text-xl font-bold text-purple-900">{sameDayLastWeek.orders}</span>
+                      <span className="text-purple-700 ml-1 text-sm">orders</span>
                     </div>
                     <div>
-                      <span className="text-2xl font-bold text-blue-900">${forecast.revenue_estimate.toLocaleString()}</span>
-                      <span className="text-blue-700 ml-1">revenue</span>
+                      <span className="text-xl font-bold text-purple-900">${sameDayLastWeek.revenue.toLocaleString()}</span>
+                      <span className="text-purple-700 ml-1 text-sm">revenue</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Simple Input Form */}
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Actual Orders</label>
-                  <input
-                    type="number"
-                    value={closeForm.orders}
-                    onChange={(e) => setCloseForm({ ...closeForm, orders: e.target.value })}
-                    placeholder="How many orders today?"
-                    className="w-full px-4 py-3 text-lg border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                  />
+              {/* Today's Forecast (only show for today) */}
+              {forecast && closeForm.date === new Date().toISOString().split('T')[0] && (
+                <div className="bg-blue-50 rounded-lg p-4 mb-4">
+                  <div className="text-sm text-blue-700 mb-1">Today's Forecast</div>
+                  <div className="flex gap-6">
+                    <div>
+                      <span className="text-xl font-bold text-blue-900">{forecast.expected_orders}</span>
+                      <span className="text-blue-700 ml-1 text-sm">orders</span>
+                    </div>
+                    <div>
+                      <span className="text-xl font-bold text-blue-900">${forecast.revenue_estimate.toLocaleString()}</span>
+                      <span className="text-blue-700 ml-1 text-sm">revenue</span>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Actual Revenue ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={closeForm.revenue}
-                    onChange={(e) => setCloseForm({ ...closeForm, revenue: e.target.value })}
-                    placeholder="Total sales"
-                    className="w-full px-4 py-3 text-lg border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                  />
+              )}
+
+              {/* Input Form */}
+              <div className="space-y-4 mt-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Orders</label>
+                    <input
+                      type="number"
+                      value={closeForm.orders}
+                      onChange={(e) => setCloseForm({ ...closeForm, orders: e.target.value })}
+                      placeholder="Total orders"
+                      className="w-full px-4 py-3 text-lg border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Revenue ($)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={closeForm.revenue}
+                      onChange={(e) => setCloseForm({ ...closeForm, revenue: e.target.value })}
+                      placeholder="Total sales"
+                      className="w-full px-4 py-3 text-lg border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                  </div>
                 </div>
+
+                {/* Labor Hours */}
                 <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
                   <label className="block text-sm font-medium text-amber-800 mb-2">
                     Total Labor Hours (optional)
@@ -1014,21 +1116,51 @@ const PizzAIDashboard = () => {
                     Target: {TARGET_LABOR_PERCENT}%
                   </p>
                 </div>
+
+                {/* Day Tags */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Tags (optional)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {DAY_TAGS.map(tag => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          if (closeForm.tags.includes(tag)) {
+                            setCloseForm({ ...closeForm, tags: closeForm.tags.filter(t => t !== tag) });
+                          } else {
+                            setCloseForm({ ...closeForm, tags: [...closeForm.tags, tag] });
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                          closeForm.tags.includes(tag)
+                            ? 'bg-red-600 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {tag.replace('-', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Notes */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Notes (optional)</label>
                   <input
                     type="text"
                     value={closeForm.notes}
                     onChange={(e) => setCloseForm({ ...closeForm, notes: e.target.value })}
-                    placeholder="Any notes? (e.g., event nearby, staff shortage)"
+                    placeholder="Any other notes..."
                     className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                   />
                 </div>
+
                 <button
                   onClick={handleCloseDay}
                   className="w-full bg-red-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-red-700 transition-colors shadow-lg"
                 >
-                  Close Day
+                  {storageService.getActualDataByDate(closeForm.date) ? 'Update Day' : 'Close Day'}
                 </button>
               </div>
             </div>
@@ -1061,6 +1193,69 @@ const PizzAIDashboard = () => {
 
               return (
                 <>
+                  {/* Weekly Goal */}
+                  <div className="bg-white rounded-xl shadow-md p-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h2 className="text-lg font-semibold text-gray-700 flex items-center gap-2">
+                        <Target className="w-5 h-5 text-red-500" />
+                        Weekly Goal
+                      </h2>
+                      <button
+                        onClick={() => setShowGoalInput(!showGoalInput)}
+                        className="text-sm text-red-600 hover:text-red-700 font-medium"
+                      >
+                        {weeklyGoal ? 'Edit Goal' : 'Set Goal'}
+                      </button>
+                    </div>
+
+                    {showGoalInput && (
+                      <div className="flex gap-2 mb-4">
+                        <input
+                          type="number"
+                          value={goalInput}
+                          onChange={(e) => setGoalInput(e.target.value)}
+                          placeholder="Weekly revenue goal"
+                          className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500"
+                        />
+                        <button
+                          onClick={handleSaveWeeklyGoal}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    )}
+
+                    {(() => {
+                      const progress = storageService.getWeekProgress();
+                      if (!progress) {
+                        return (
+                          <p className="text-gray-500 text-sm">Set a weekly revenue goal to track progress</p>
+                        );
+                      }
+                      return (
+                        <div>
+                          <div className="flex justify-between text-sm mb-2">
+                            <span className="text-gray-600">${progress.current.toLocaleString()} of ${progress.goal.toLocaleString()}</span>
+                            <span className={`font-semibold ${progress.percentage >= 100 ? 'text-green-600' : 'text-gray-700'}`}>
+                              {progress.percentage}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-4">
+                            <div
+                              className={`h-4 rounded-full transition-all ${progress.percentage >= 100 ? 'bg-green-500' : 'bg-red-500'}`}
+                              style={{ width: `${Math.min(progress.percentage, 100)}%` }}
+                            />
+                          </div>
+                          <div className="text-xs text-gray-500 mt-2">
+                            {progress.daysTracked} days tracked this week
+                            {progress.percentage >= 100 && ' - Goal reached!'}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
                   {/* Week Performance */}
                   <div className="bg-white rounded-xl shadow-md p-6">
                     <h2 className="text-lg font-semibold text-gray-700 mb-4">This Week vs Last Week</h2>
@@ -1198,6 +1393,23 @@ const PizzAIDashboard = () => {
                       </div>
                     );
                   })()}
+
+                  {/* Export Button */}
+                  <div className="bg-white rounded-xl shadow-md p-6">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-lg font-semibold text-gray-700">Export Data</h3>
+                        <p className="text-sm text-gray-500">Download your data as CSV for your accountant</p>
+                      </div>
+                      <button
+                        onClick={handleExportCSV}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                        Export CSV
+                      </button>
+                    </div>
+                  </div>
                 </>
               );
             })()}

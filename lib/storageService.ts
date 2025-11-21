@@ -19,7 +19,19 @@ const STORAGE_KEYS = {
   CUSTOM_PREP_TASKS: 'pizzai_custom_prep_tasks',
   CHECKED_PREP_ITEMS: 'pizzai_checked_prep',
   CUSTOM_INVENTORY: 'pizzai_custom_inventory',
+  WEEKLY_GOAL: 'pizzai_weekly_goal',
 } as const;
+
+// Day tags for annotations
+export const DAY_TAGS = [
+  'event',
+  'short-staffed',
+  'bad-weather',
+  'promotion',
+  'holiday',
+  'slow-day',
+] as const;
+export type DayTag = typeof DAY_TAGS[number];
 
 // Custom prep task
 export interface CustomPrepTask {
@@ -95,7 +107,13 @@ export interface ActualDataRecord {
   laborHours?: number;
   laborCost?: number;
   notes?: string;
+  tags?: DayTag[];
   createdAt: string;
+}
+
+export interface WeeklyGoal {
+  revenue: number;
+  weekStart: string; // ISO date of week start (Monday)
 }
 
 /**
@@ -323,22 +341,33 @@ class StorageService {
     actualRevenue: number,
     laborHours?: number,
     laborCost?: number,
-    notes?: string
+    notes?: string,
+    tags?: DayTag[]
   ): ActualDataRecord {
     const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
 
+    // Check if we already have data for this date
+    const existingIndex = records.findIndex(r => r.date === date);
+
     const record: ActualDataRecord = {
-      id: this.generateId(),
+      id: existingIndex >= 0 ? records[existingIndex].id : this.generateId(),
       date,
       actualOrders,
       actualRevenue,
       laborHours,
       laborCost,
       notes,
-      createdAt: new Date().toISOString(),
+      tags,
+      createdAt: existingIndex >= 0 ? records[existingIndex].createdAt : new Date().toISOString(),
     };
 
-    records.push(record);
+    if (existingIndex >= 0) {
+      // Update existing record
+      records[existingIndex] = record;
+    } else {
+      // Add new record
+      records.push(record);
+    }
 
     // Keep only last 90 days
     const ninetyDaysAgo = new Date();
@@ -414,6 +443,93 @@ class StorageService {
    */
   getTrackedDaysCount(): number {
     return this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS).length;
+  }
+
+  /**
+   * Get data for same day last week (for comparison)
+   */
+  getSameDayLastWeek(date: string): ActualDataRecord | null {
+    const targetDate = new Date(date);
+    targetDate.setDate(targetDate.getDate() - 7);
+    const lastWeekDate = targetDate.toISOString().split('T')[0];
+    return this.getActualDataByDate(lastWeekDate);
+  }
+
+  // ===== WEEKLY GOAL =====
+
+  saveWeeklyGoal(revenue: number): WeeklyGoal {
+    // Get start of current week (Monday)
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Adjust for Monday start
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + diff);
+    const weekStart = monday.toISOString().split('T')[0];
+
+    const goal: WeeklyGoal = { revenue, weekStart };
+    localStorage.setItem(STORAGE_KEYS.WEEKLY_GOAL, JSON.stringify(goal));
+    return goal;
+  }
+
+  getWeeklyGoal(): WeeklyGoal | null {
+    const data = localStorage.getItem(STORAGE_KEYS.WEEKLY_GOAL);
+    if (!data) return null;
+    return JSON.parse(data);
+  }
+
+  getWeekProgress(): { goal: number; current: number; percentage: number; daysTracked: number } | null {
+    const goal = this.getWeeklyGoal();
+    if (!goal) return null;
+
+    // Get start of current week (Monday)
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + diff);
+    const weekStart = monday.toISOString().split('T')[0];
+
+    // Get all actuals for this week
+    const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
+    const thisWeekRecords = records.filter(r => r.date >= weekStart);
+
+    const current = thisWeekRecords.reduce((sum, r) => sum + r.actualRevenue, 0);
+    const percentage = Math.round((current / goal.revenue) * 100);
+
+    return {
+      goal: goal.revenue,
+      current,
+      percentage: Math.min(percentage, 100),
+      daysTracked: thisWeekRecords.length,
+    };
+  }
+
+  // ===== CSV EXPORT =====
+
+  exportActualsToCSV(): string {
+    const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
+    const sorted = [...records].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    const headers = ['Date', 'Day', 'Orders', 'Revenue', 'Labor Hours', 'Labor Cost', 'Labor %', 'Tags', 'Notes'];
+    const rows = sorted.map(r => {
+      const laborPercent = r.laborCost && r.actualRevenue > 0
+        ? ((r.laborCost / r.actualRevenue) * 100).toFixed(1) + '%'
+        : '';
+      const dayName = new Date(r.date).toLocaleDateString('en-US', { weekday: 'long' });
+      return [
+        r.date,
+        dayName,
+        r.actualOrders,
+        r.actualRevenue.toFixed(2),
+        r.laborHours || '',
+        r.laborCost ? r.laborCost.toFixed(2) : '',
+        laborPercent,
+        (r.tags || []).join('; '),
+        r.notes || '',
+      ].map(v => `"${v}"`).join(',');
+    });
+
+    return [headers.join(','), ...rows].join('\n');
   }
 
   // ===== CUSTOM PREP TASKS =====
