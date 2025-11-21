@@ -1,79 +1,32 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
-import { Cloud, CloudRain, Sun, TrendingUp, AlertCircle, CheckCircle, Calendar, Clock, DollarSign, Pizza, Sparkles } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Minus } from 'lucide-react';
 import { getHourlyWeather, getWeeklyWeather, type HourlyWeather, type DailyWeather } from '@/lib/weatherService';
-import {
-  generateAISchedule,
-  exportScheduleToCSV,
-  getWeekStartDate,
-  getWeekDates,
-  MOCK_EMPLOYEES
-} from '@/lib/schedulingService';
-import { getEventsForDateRange, getHighImpactEventsInNext } from '@/lib/specialEvents';
-import type { Employee, Schedule, SpecialEvent } from '@/lib/schedulingTypes';
+import { getHighImpactEventsInNext } from '@/lib/specialEvents';
+import type { SpecialEvent } from '@/lib/schedulingTypes';
 import { storageService } from '@/lib/storageService';
 import { analyticsService } from '@/lib/analyticsService';
 
-// --- ADD THESE TYPE DEFINITIONS ---
-interface Forecast {
-  hourly_forecast: { hour: number; predicted_orders: number; confidence: string }[];
-  peak_hours: string[];
-  actions: string[];
-  weather_impact: string;
+// Simplified type definitions
+interface DailyForecast {
+  expected_orders: number;
   revenue_estimate: number;
+  peak_hours: string;
+  weather_impact: string;
+  weather_boost: number; // percentage, can be negative
+  prep_items: string[];
+  staffing_note: string;
 }
-
-interface WeeklyForecast {
-  daily_forecasts: {
-    day: string;
-    date: string;
-    predicted_orders: number;
-    revenue_estimate: number;
-    peak_window: string;
-    weather_impact: string;
-    key_note: string;
-  }[];
-  week_summary: {
-    total_orders: number;
-    total_revenue: number;
-    busiest_day: string;
-    prep_priorities: string[];
-  };
-}
-
-interface InventoryPlan {
-  buy_list: { ingredient: string; quantity: number; unit: string; priority: string; reason: string }[];
-  prep_tasks: string[];
-  status: string;
-  cost_estimate: number;
-}
-
-interface Promo {
-  offer_name: string;
-  copy_short: string;
-  copy_email: string;
-  discount: string;
-  target_lift: string;
-}
-// --- END OF TYPE DEFINITIONS ---
 
 const MOCK_DATA = {
-  sales_history: [
-    { date: "2025-11-20", hour: 17, sku: "Pepperoni", orders: 18, price: 14.00 },
-    { date: "2025-11-20", hour: 18, sku: "Pepperoni", orders: 23, price: 14.00 },
-    { date: "2025-11-20", hour: 18, sku: "Margherita", orders: 17, price: 12.00 },
-    { date: "2025-11-20", hour: 19, sku: "Pepperoni", orders: 28, price: 14.00 },
-    { date: "2025-11-20", hour: 19, sku: "Supreme", orders: 15, price: 16.00 },
-    { date: "2025-11-20", hour: 20, sku: "Margherita", orders: 12, price: 12.00 }
-  ],
   inventory: [
-    { ingredient: "Mozzarella", unit: "lb", on_hand: 20, par_level: 40 },
-    { ingredient: "Pepperoni", unit: "lb", on_hand: 8, par_level: 25 },
-    { ingredient: "Dough", unit: "balls", on_hand: 45, par_level: 80 },
-    { ingredient: "Tomato Sauce", unit: "qt", on_hand: 6, par_level: 12 },
-    { ingredient: "Vegetables", unit: "lb", on_hand: 15, par_level: 20 }
+    { ingredient: "Mozzarella", unit: "lb", on_hand: 20, par_level: 40, cost_per_unit: 4.50 },
+    { ingredient: "Pepperoni", unit: "lb", on_hand: 8, par_level: 25, cost_per_unit: 6.00 },
+    { ingredient: "Dough", unit: "balls", on_hand: 45, par_level: 80, cost_per_unit: 0.75 },
+    { ingredient: "Tomato Sauce", unit: "qt", on_hand: 6, par_level: 12, cost_per_unit: 3.00 },
+    { ingredient: "Vegetables", unit: "lb", on_hand: 15, par_level: 20, cost_per_unit: 2.50 }
   ],
   weather: [
     { date: "2025-11-21", hour: 17, temp_f: 41, precip_chance: 70, condition: "Light Rain" },
@@ -93,58 +46,38 @@ const MOCK_DATA = {
 };
 
 const PizzAIDashboard = () => {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('today');
   const [currentDate, setCurrentDate] = useState(new Date());
-  // --- USE GENERICS FOR STATE VARIABLES ---
-  const [forecast, setForecast] = useState<Forecast | null>(null);
-  const [weeklyForecast, setWeeklyForecast] = useState<WeeklyForecast | null>(null);
-  const [inventoryPlan, setInventoryPlan] = useState<InventoryPlan | null>(null);
-  const [promo, setPromo] = useState<Promo | null>(null);
-  // -----------------------------------------
+  const [forecast, setForecast] = useState<DailyForecast | null>(null);
   const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState('today'); // 'today' or 'week'
-  const [prepMode, setPrepMode] = useState(false);
   const [inventoryInputs, setInventoryInputs] = useState<Record<string, number>>(
-
     MOCK_DATA.inventory.reduce((acc, item) => ({
       ...acc,
       [item.ingredient]: item.on_hand
     }), {})
   );
-  const [promoSettings, setPromoSettings] = useState({
-    tone: 'classic',
-    channel: 'email'
-  });
 
   // Weather data state
   const [hourlyWeather, setHourlyWeather] = useState<HourlyWeather[]>(MOCK_DATA.weather);
   const [weeklyWeather, setWeeklyWeather] = useState<DailyWeather[]>(MOCK_DATA.weekly_weather);
-  const [weatherLoading, setWeatherLoading] = useState(true);
-
-  // Scheduling state
-  const [employees, setEmployees] = useState<Employee[]>(MOCK_EMPLOYEES);
-  const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null);
-  const [scheduleLoading, setScheduleLoading] = useState(false);
   const [upcomingEvents, setUpcomingEvents] = useState<SpecialEvent[]>([]);
 
-  // History & Analytics state
-  const [actualDataForm, setActualDataForm] = useState({
-    date: new Date().toISOString().split('T')[0],
-    actualOrders: '',
-    actualRevenue: '',
+  // Close Day state
+  const [closeForm, setCloseForm] = useState({
+    orders: '',
+    revenue: '',
     notes: ''
   });
-  const [analyticsRefresh, setAnalyticsRefresh] = useState(0);
+  const [showCloseSuccess, setShowCloseSuccess] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch weather data on component mount
+  // Fetch weather and events on mount
   useEffect(() => {
-    const fetchWeatherData = async () => {
-      setWeatherLoading(true);
+    const fetchData = async () => {
       try {
         const [hourly, weekly] = await Promise.all([
           getHourlyWeather(),
@@ -153,1480 +86,649 @@ const PizzAIDashboard = () => {
         setHourlyWeather(hourly);
         setWeeklyWeather(weekly);
       } catch (error) {
-        console.error('Error loading weather data:', error);
-        // Keep using mock data as fallback
-      } finally {
-        setWeatherLoading(false);
+        console.error('Error loading weather:', error);
       }
+
+      // Get upcoming events
+      const events = getHighImpactEventsInNext(7);
+      setUpcomingEvents(events);
     };
 
-    fetchWeatherData();
+    fetchData();
   }, []);
 
-  const generateForecast = async () => {
+  // Auto-generate forecast on mount
+  useEffect(() => {
+    if (!forecast) {
+      generateTodayForecast();
+    }
+  }, []);
+
+  const generateTodayForecast = async () => {
     setLoading(true);
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: `You are PizzAI, an operations assistant for a pizzeria. Analyze this data and provide a forecast.
+      // Get day of week for baseline
+      const dayOfWeek = currentDate.getDay();
+      const isWeekend = dayOfWeek === 5 || dayOfWeek === 6; // Fri or Sat
+      const isSunday = dayOfWeek === 0;
 
-Sales History: ${JSON.stringify(MOCK_DATA.sales_history)}
-Weather Forecast: ${JSON.stringify(hourlyWeather)}
-Prep Mode: ${prepMode ? 'Focus on morning prep tasks' : 'Standard mode'}
+      // Base orders by day type
+      let baseOrders = isWeekend ? 165 : isSunday ? 130 : 90;
 
-Generate a JSON response with:
-{
-  "hourly_forecast": [{"hour": 17, "predicted_orders": 25, "confidence": "high"}],
-  "peak_hours": ["6 PM - 8 PM"],
-  "actions": ["Action item 1", "Action item 2"],
-  "weather_impact": "Brief analysis",
-  "revenue_estimate": 850
-}
+      // Weather adjustment
+      const avgPrecip = hourlyWeather.reduce((sum, h) => sum + h.precip_chance, 0) / hourlyWeather.length;
+      const isRainy = avgPrecip > 50;
+      const weatherBoost = isRainy ? 15 : 0; // Rain = more delivery orders
 
-${prepMode ? 'Include specific morning prep tasks in actions array.' : ''}
-
-Respond with ONLY the JSON object, no markdown or explanation.`
-          }]
-        })
+      // Check for special events
+      const todayEvents = upcomingEvents.filter(e => {
+        const eventDate = new Date(e.date).toDateString();
+        return eventDate === currentDate.toDateString();
       });
 
-      const data = await response.json();
-      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
-      const cleanText = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleanText);
-      setForecast(parsed);
-
-      // Save forecast to localStorage
-      storageService.saveForecast(parsed, 'daily');
-    } catch (err) {
-      console.error("Forecast error:", err);
-      const fallbackForecast = {
-        hourly_forecast: [
-          { hour: 17, predicted_orders: 22, confidence: "medium" },
-          { hour: 18, predicted_orders: 35, confidence: "high" },
-          { hour: 19, predicted_orders: 42, confidence: "high" },
-          { hour: 20, predicted_orders: 28, confidence: "medium" }
-        ],
-        peak_hours: ["6 PM - 8 PM"],
-        actions: prepMode ? [
-          "Start dough proofing by 10 AM for evening service",
-          "Prep 50 dough balls for tonight's rush",
-          "Pre-portion pepperoni for peak efficiency",
-          "Check sauce inventory and prep stations"
-        ] : [
-          "Prepare extra dough for evening rush",
-          "Stock pepperoni - highest demand item",
-          "Weather may reduce foot traffic by 15%"
-        ],
-        weather_impact: "Light rain expected during peak hours may slightly reduce walk-in traffic",
-        revenue_estimate: 1680
-      };
-      setForecast(fallbackForecast);
-
-      // Save fallback forecast to localStorage
-      storageService.saveForecast(fallbackForecast, 'daily');
-    }
-    setLoading(false);
-  };
-
-  const generateWeeklyForecast = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1500,
-          messages: [{
-            role: "user",
-            content: `You are PizzAI. Generate a 7-day forecast for a pizzeria.
-
-Historical Patterns:
-- Weekday average: 80-100 orders
-- Weekend (Fri-Sat): 150-180 orders
-- Sunday: 120-140 orders
-
-Weekly Weather: ${JSON.stringify(weeklyWeather)}
-
-Generate a JSON response with:
-{
-  "daily_forecasts": [
-    {
-      "day": "Thu",
-      "date": "11/21",
-      "predicted_orders": 95,
-      "revenue_estimate": 1300,
-      "peak_window": "6-8 PM",
-      "weather_impact": "moderate",
-      "key_note": "Brief insight"
-    }
-  ],
-  "week_summary": {
-    "total_orders": 850,
-    "total_revenue": 11500,
-    "busiest_day": "Saturday",
-    "prep_priorities": ["Priority 1", "Priority 2"]
-  }
-}
-
-Respond with ONLY the JSON object.`
-          }]
-        })
-      });
-
-      const data = await response.json();
-      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
-      const cleanText = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleanText);
-      setWeeklyForecast(parsed);
-
-      // Save weekly forecast to localStorage
-      storageService.saveForecast(parsed, 'weekly');
-    } catch (err) {
-      console.error("Weekly forecast error:", err);
-      const fallbackWeekly = {
-        daily_forecasts: [
-          { day: "Thu", date: "11/21", predicted_orders: 85, revenue_estimate: 1190, peak_window: "6-8 PM", weather_impact: "moderate", key_note: "Rain may reduce walk-ins" },
-          { day: "Fri", date: "11/22", predicted_orders: 165, revenue_estimate: 2310, peak_window: "7-9 PM", weather_impact: "low", key_note: "Strong weekend start expected" },
-          { day: "Sat", date: "11/23", predicted_orders: 180, revenue_estimate: 2520, peak_window: "6-9 PM", weather_impact: "none", key_note: "Peak weekend day - full prep needed" },
-          { day: "Sun", date: "11/24", predicted_orders: 130, revenue_estimate: 1820, peak_window: "5-7 PM", weather_impact: "low", key_note: "Family dinner rush expected" },
-          { day: "Mon", date: "11/25", predicted_orders: 75, revenue_estimate: 1050, peak_window: "6-7 PM", weather_impact: "moderate", key_note: "Quiet start to week" },
-          { day: "Tue", date: "11/26", predicted_orders: 90, revenue_estimate: 1260, peak_window: "6-8 PM", weather_impact: "none", key_note: "Good promo opportunity" },
-          { day: "Wed", date: "11/27", predicted_orders: 140, revenue_estimate: 1960, peak_window: "5-8 PM", weather_impact: "none", key_note: "Pre-holiday boost expected" }
-        ],
-        week_summary: {
-          total_orders: 865,
-          total_revenue: 12110,
-          busiest_day: "Saturday",
-          prep_priorities: [
-            "Heavy weekend prep Thursday/Friday",
-            "Monitor dough inventory for Saturday rush",
-            "Plan promotional campaign for Monday-Tuesday slow days"
-          ]
-        }
-      };
-      setWeeklyForecast(fallbackWeekly);
-
-      // Save fallback weekly forecast to localStorage
-      storageService.saveForecast(fallbackWeekly, 'weekly');
-    }
-    setLoading(false);
-  };
-
-  const generateInventoryPlan = async () => {
-    setLoading(true);
-    try {
-      const currentInventory = MOCK_DATA.inventory.map(item => ({
-        ...item,
-        on_hand: inventoryInputs[item.ingredient]
-      }));
-
-      const weekContext = weeklyForecast ? `Weekly demand: ${weeklyForecast.week_summary.total_orders} orders` : 'Single day planning';
-
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: `You are PizzAI inventory planner. Analyze current inventory vs par levels and forecast demand.
-
-Current Inventory: ${JSON.stringify(currentInventory)}
-Context: ${weekContext}
-Predicted Evening Rush: 40-45 orders
-
-Generate a JSON response with:
-{
-  "buy_list": [{"ingredient": "Item", "quantity": 20, "unit": "lb", "priority": "high", "reason": "Brief reason"}],
-  "prep_tasks": ["Task 1", "Task 2"],
-  "status": "overall status",
-  "cost_estimate": 450
-}
-
-Respond with ONLY the JSON object, no markdown.`
-          }]
-        })
-      });
-
-      const data = await response.json();
-      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
-      const cleanText = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleanText);
-      setInventoryPlan(parsed);
-    } catch (err) {
-      console.error("Inventory error:", err);
-      setInventoryPlan({
-        buy_list: [
-          { ingredient: "Mozzarella", quantity: 20, unit: "lb", priority: "high", reason: "Below par level, need for evening rush" },
-          { ingredient: "Pepperoni", quantity: 17, unit: "lb", priority: "critical", reason: "Critically low, top-selling item" },
-          { ingredient: "Dough", quantity: 35, unit: "balls", priority: "medium", reason: "Prepare for tomorrow morning" }
-        ],
-        prep_tasks: [
-          "Proof dough for evening service (2-hour lead time)",
-          "Prep vegetable toppings for rush period",
-          "Check sauce levels for weekend"
-        ],
-        status: "Action needed on 2 critical items",
-        cost_estimate: 380
-      });
-    }
-    setLoading(false);
-  };
-
-  const generatePromo = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: `You are PizzAI promo studio. Create a promotional email for a slow period.
-
-Context:
-- Slow window: 5 PM - 6 PM today
-- Top SKUs: Pepperoni, Margherita
-- Tone: ${promoSettings.tone}
-- Channel: ${promoSettings.channel}
-
-Generate a JSON response with:
-{
-  "offer_name": "Campaign name",
-  "copy_short": "Brief tagline",
-  "copy_email": "Full email body text (2-3 sentences)",
-  "discount": "Offer details",
-  "target_lift": "15%"
-}
-
-Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
-          }]
-        })
-      });
-
-      const data = await response.json();
-      const text = data.content.map((item: any) => item.text || "").join("\n").trim();
-      const cleanText = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleanText);
-      setPromo(parsed);
-    } catch (err) {
-      console.error("Promo error:", err);
-      setPromo({
-        offer_name: "Early Bird Special",
-        copy_short: "Beat the rush, save on dinner",
-        copy_email: "Order between 5-6 PM today and receive 15% off your entire order. Our classic Pepperoni and Margherita pizzas are made fresh to order. Perfect timing to skip the evening rush.",
-        discount: "15% off orders placed 5-6 PM",
-        target_lift: "20%"
-      });
-    }
-    setLoading(false);
-  };
-
-  const generateSchedule = async () => {
-    setScheduleLoading(true);
-    try {
-      // Get current week's Monday
-      const weekStart = getWeekStartDate(new Date());
-      const weekDates = getWeekDates(weekStart);
-
-      // Get events for the week
-      const events = getEventsForDateRange(weekStart, weekDates[6]);
-      setUpcomingEvents(events);
-
-      // Get or generate weekly forecast if not available
-      let weeklyData = weeklyForecast;
-      if (!weeklyData) {
-        await generateWeeklyForecast();
-        weeklyData = weeklyForecast; // Use the newly generated forecast
+      let eventMultiplier = 1;
+      if (todayEvents.length > 0) {
+        eventMultiplier = todayEvents[0].impactMultiplier;
       }
 
-      // Prepare forecast data in the format needed for scheduling
-      const forecastData = {
-        daily: weekDates.map((date, index) => {
-          const dayForecast = weeklyData?.daily_forecasts?.[index];
-          return {
-            date,
-            predictedOrders: dayForecast?.predicted_orders || 100,
-            revenueEstimate: dayForecast?.revenue_estimate || 1400,
-            peakWindow: dayForecast?.peak_window || '6-8 PM',
-          };
-        }),
+      const expectedOrders = Math.round(baseOrders * (1 + weatherBoost / 100) * eventMultiplier);
+      const avgTicket = 14;
+
+      const forecastData: DailyForecast = {
+        expected_orders: expectedOrders,
+        revenue_estimate: expectedOrders * avgTicket,
+        peak_hours: isWeekend ? "6:00 PM - 9:00 PM" : "5:30 PM - 8:00 PM",
+        weather_impact: isRainy
+          ? "Rain expected - delivery orders typically up 15%"
+          : "Clear weather - normal walk-in/delivery mix",
+        weather_boost: weatherBoost,
+        prep_items: [
+          `Prep ${Math.round(expectedOrders * 0.6)} dough balls`,
+          `Portion ${Math.round(expectedOrders * 0.4)} lb pepperoni`,
+          `Check sauce levels (need ~${Math.round(expectedOrders * 0.1)} qt)`,
+          isWeekend ? "Full weekend prep - extra cheese ready" : "Standard prep levels"
+        ],
+        staffing_note: isWeekend
+          ? "Weekend shift - ensure full coverage 5-9 PM"
+          : "Weekday - standard evening crew"
       };
 
-      // Generate schedule
-      const result = await generateAISchedule({
-        weekStartDate: weekStart,
-        employees,
-        forecasts: forecastData,
-        specialEvents: events,
-        constraints: {
-          maxLaborCostPercent: 30, // Target 30% labor cost
-          minCoverage: {
-            cook: 1,
-            server: 1,
-            delivery: 1,
-            prep: 1,
-            manager: 1,
-          },
-          preferredShiftLengths: {
-            min: 4,
-            max: 8,
-          },
-        },
-      });
+      setForecast(forecastData);
 
-      setCurrentSchedule(result.schedule);
+      // Save to storage
+      storageService.saveForecast({
+        hourly_forecast: [{ hour: 18, predicted_orders: expectedOrders, confidence: 'high' }],
+        peak_hours: [forecastData.peak_hours],
+        actions: forecastData.prep_items,
+        weather_impact: forecastData.weather_impact,
+        revenue_estimate: forecastData.revenue_estimate
+      }, 'daily');
 
-      // Save schedule to localStorage
-      storageService.saveSchedule(result.schedule);
     } catch (error) {
-      console.error('Error generating schedule:', error);
-    } finally {
-      setScheduleLoading(false);
+      console.error('Forecast error:', error);
     }
+    setLoading(false);
   };
 
-  const handleExportSchedule = () => {
-    if (!currentSchedule) return;
-    const csv = exportScheduleToCSV(currentSchedule, employees);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `schedule_${currentSchedule.weekStartDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // History & Analytics handlers
-  const handleSubmitActualData = () => {
-    if (!actualDataForm.actualOrders || !actualDataForm.actualRevenue) {
-      alert('Please enter both orders and revenue');
+  const handleCloseDay = () => {
+    if (!closeForm.orders || !closeForm.revenue) {
+      alert('Please enter orders and revenue');
       return;
     }
 
+    const today = new Date().toISOString().split('T')[0];
     storageService.saveActualData(
-      actualDataForm.date,
-      parseInt(actualDataForm.actualOrders),
-      parseFloat(actualDataForm.actualRevenue),
-      actualDataForm.notes
+      today,
+      parseInt(closeForm.orders),
+      parseFloat(closeForm.revenue),
+      closeForm.notes
     );
 
-    // Reset form
-    setActualDataForm({
-      date: new Date().toISOString().split('T')[0],
-      actualOrders: '',
-      actualRevenue: '',
-      notes: ''
-    });
-
-    // Trigger analytics refresh
-    setAnalyticsRefresh(prev => prev + 1);
-    alert('Actual data saved successfully!');
+    setCloseForm({ orders: '', revenue: '', notes: '' });
+    setShowCloseSuccess(true);
+    setTimeout(() => setShowCloseSuccess(false), 3000);
   };
 
-  const handleExportAllData = () => {
-    const jsonData = storageService.exportAllData();
-    const blob = new Blob([jsonData], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pizzai_data_export_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const getInventoryStatus = (item: typeof MOCK_DATA.inventory[0]) => {
+    const onHand = inventoryInputs[item.ingredient];
+    const ratio = onHand / item.par_level;
+    if (ratio < 0.3) return { status: 'critical', color: 'red', label: 'ORDER NOW' };
+    if (ratio < 0.5) return { status: 'low', color: 'orange', label: 'Low' };
+    if (ratio < 0.8) return { status: 'watch', color: 'yellow', label: 'Watch' };
+    return { status: 'good', color: 'green', label: 'Good' };
   };
 
-  const handleImportData = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'application/json';
-    input.onchange = (e: any) => {
-      const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event: any) => {
-          try {
-            const success = storageService.importData(event.target.result);
-            if (success) {
-              setAnalyticsRefresh(prev => prev + 1);
-              alert('Data imported successfully!');
-            } else {
-              alert('Failed to import data');
-            }
-          } catch (error) {
-            alert('Error importing data: Invalid file format');
-          }
-        };
-        reader.readAsText(file);
-      }
+  const WeatherIcon = ({ condition }: { condition: string }) => {
+    if (condition.includes('Rain')) return <CloudRain className="w-6 h-6 text-blue-500" />;
+    if (condition.includes('Cloud')) return <Cloud className="w-6 h-6 text-gray-500" />;
+    return <Sun className="w-6 h-6 text-yellow-500" />;
+  };
+
+  // Get recent performance for Trends
+  const getRecentPerformance = () => {
+    const actuals = storageService.getActualData();
+    if (actuals.length === 0) return null;
+
+    const sorted = [...actuals].sort((a, b) =>
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    // Last 7 days
+    const lastWeek = sorted.slice(0, 7);
+    const prevWeek = sorted.slice(7, 14);
+
+    if (lastWeek.length === 0) return null;
+
+    const lastWeekOrders = lastWeek.reduce((sum, d) => sum + d.actualOrders, 0);
+    const lastWeekRevenue = lastWeek.reduce((sum, d) => sum + d.actualRevenue, 0);
+    const prevWeekOrders = prevWeek.reduce((sum, d) => sum + d.actualOrders, 0);
+    const prevWeekRevenue = prevWeek.reduce((sum, d) => sum + d.actualRevenue, 0);
+
+    const orderChange = prevWeekOrders > 0
+      ? ((lastWeekOrders - prevWeekOrders) / prevWeekOrders) * 100
+      : 0;
+    const revenueChange = prevWeekRevenue > 0
+      ? ((lastWeekRevenue - prevWeekRevenue) / prevWeekRevenue) * 100
+      : 0;
+
+    return {
+      lastWeek: {
+        orders: lastWeekOrders,
+        revenue: lastWeekRevenue,
+        days: lastWeek.length
+      },
+      orderChange,
+      revenueChange,
+      recentDays: lastWeek.map(d => ({
+        date: d.date,
+        orders: d.actualOrders,
+        revenue: d.actualRevenue
+      }))
     };
-    input.click();
   };
 
-  const handleClearOldData = () => {
-    if (confirm('Clear all data older than 90 days?')) {
-      const success = storageService.clearOldData(90);
-      if (success) {
-        setAnalyticsRefresh(prev => prev + 1);
-        alert('Old data cleared successfully!');
-      }
-    }
-  };
-
-  const WeatherIcon = ({ condition }) => {
-    if (condition.includes('Rain')) return <CloudRain className="w-5 h-5 text-blue-500" />;
-    if (condition.includes('Cloud')) return <Cloud className="w-5 h-5 text-gray-500" />;
-    return <Sun className="w-5 h-5 text-yellow-500" />;
-  };
+  const tabs = [
+    { id: 'today', label: 'Today', icon: Clock },
+    { id: 'prep', label: 'Prep & Stock', icon: Package },
+    { id: 'close', label: 'Close Day', icon: ClipboardCheck },
+    { id: 'trends', label: 'Trends', icon: BarChart3 }
+  ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-yellow-50 page-transition">
-      <div className="max-w-7xl mx-auto p-6">
-        <header className="bg-gradient-to-r from-red-600 via-orange-600 to-red-600 rounded-2xl shadow-2xl p-8 mb-6 relative overflow-hidden animate-fade-in-down">
-          <div className="absolute inset-0 bg-black opacity-5"></div>
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" style={{ backgroundSize: '200% 100%' }}></div>
-          <div className="relative z-10 flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <div className="bg-white rounded-full p-3 shadow-2xl transform transition-transform duration-300 hover:scale-110 hover:rotate-12 cursor-pointer">
-                <Pizza className="w-10 h-10 text-red-600" />
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-yellow-50">
+      <div className="max-w-5xl mx-auto p-4 md:p-6">
+        {/* Simple Header */}
+        <header className="bg-gradient-to-r from-red-600 to-orange-600 rounded-xl shadow-lg p-5 mb-5">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <div className="bg-white rounded-full p-2">
+                <Pizza className="w-8 h-8 text-red-600" />
               </div>
               <div>
-                <div className="flex items-center gap-3">
-                  <h1 className="text-4xl font-black text-white tracking-tight text-shadow-lg">PizzAI</h1>
-                  <Sparkles className="w-6 h-6 text-yellow-300 animate-pulse-soft" />
-                </div>
-                <p className="text-red-100 mt-1 font-medium text-lg">AI-Powered Restaurant Operations Platform</p>
+                <h1 className="text-2xl font-bold text-white">PizzAI</h1>
+                <p className="text-red-100 text-sm">Know what's coming</p>
               </div>
             </div>
-            <div className="glass text-right rounded-xl px-6 py-3 shadow-lg transform transition-all duration-300 hover:scale-105">
-              <div className="text-lg font-bold text-white text-shadow">
-                {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            <div className="text-right">
+              <div className="text-white font-semibold">
+                {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
               </div>
-              <div className="flex items-center justify-end gap-2 mt-2">
-                <div className="transform transition-transform duration-300 hover:scale-125 hover:rotate-12">
-                  <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
-                </div>
-                <span className="text-sm text-white font-medium">
-                  {hourlyWeather[0]?.temp_f || '--'}°F - {hourlyWeather[0]?.condition || 'Loading...'}
-                </span>
+              <div className="flex items-center gap-2 text-red-100 text-sm mt-1">
+                <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
+                <span>{hourlyWeather[0]?.temp_f || '--'}°F</span>
               </div>
             </div>
           </div>
         </header>
 
-        <div className="bg-white rounded-2xl shadow-xl mb-6 overflow-hidden border border-red-100 animate-fade-in">
-          <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-orange-50">
-            <nav className="flex">
-              {['dashboard', 'scheduler', 'inventory', 'promo', 'history'].map((tab, index) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  style={{ animationDelay: `${index * 0.1}s` }}
-                  className={`px-8 py-4 font-bold capitalize transition-all duration-300 transform hover:scale-105 animate-fade-in ${
-                    activeTab === tab
-                      ? 'border-b-4 border-red-600 text-red-600 bg-white shadow-sm'
-                      : 'text-gray-600 hover:text-red-600 hover:bg-white/50'
-                  }`}
-                >
-                  {tab === 'inventory' ? 'Inventory Planner' :
-                   tab === 'promo' ? 'Promo Studio' :
-                   tab === 'scheduler' ? 'Staff Scheduler' :
-                   tab === 'history' ? 'History & Analytics' : tab}
-                </button>
-              ))}
-            </nav>
-          </div>
+        {/* Simple Tab Navigation */}
+        <nav className="flex gap-2 mb-5 bg-white rounded-lg p-1 shadow-sm">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${
+                activeTab === tab.id
+                  ? 'bg-red-600 text-white shadow-md'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              <span className="hidden sm:inline">{tab.label}</span>
+            </button>
+          ))}
+        </nav>
 
-          <div className="p-6">
-            {activeTab === 'dashboard' && (
-              <div className="space-y-6 tab-content">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-4">
-                    <h2 className="text-2xl font-bold text-gray-900">Operations Forecast</h2>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setViewMode('today')}
-                        className={`px-4 py-2 rounded-lg transition-all duration-300 font-semibold transform hover:scale-105 active:scale-95 ${
-                          viewMode === 'today' ? 'bg-red-600 text-white shadow-lg' : 'btn-secondary'
-                        }`}
-                      >
-                        Today
-                      </button>
-                      <button
-                        onClick={() => setViewMode('week')}
-                        className={`px-4 py-2 rounded-lg transition-all duration-300 font-semibold transform hover:scale-105 active:scale-95 ${
-                          viewMode === 'week' ? 'bg-red-600 text-white shadow-lg' : 'btn-secondary'
-                        }`}
-                      >
-                        7-Day
-                      </button>
+        {/* TODAY TAB */}
+        {activeTab === 'today' && (
+          <div className="space-y-4">
+            {/* Main Forecast Card */}
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <div className="flex justify-between items-start mb-4">
+                <h2 className="text-lg font-semibold text-gray-700">Today's Forecast</h2>
+                <button
+                  onClick={generateTodayForecast}
+                  disabled={loading}
+                  className="text-sm text-red-600 hover:text-red-700 font-medium"
+                >
+                  {loading ? 'Updating...' : 'Refresh'}
+                </button>
+              </div>
+
+              {forecast ? (
+                <div className="space-y-6">
+                  {/* Big Numbers */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-blue-50 rounded-lg p-4 text-center">
+                      <div className="text-4xl font-bold text-blue-900">{forecast.expected_orders}</div>
+                      <div className="text-sm text-blue-700 mt-1">Expected Orders</div>
+                      {forecast.weather_boost !== 0 && (
+                        <div className="text-xs text-blue-600 mt-1">
+                          {forecast.weather_boost > 0 ? '+' : ''}{forecast.weather_boost}% weather
+                        </div>
+                      )}
+                    </div>
+                    <div className="bg-green-50 rounded-lg p-4 text-center">
+                      <div className="text-4xl font-bold text-green-900">${forecast.revenue_estimate.toLocaleString()}</div>
+                      <div className="text-sm text-green-700 mt-1">Est. Revenue</div>
                     </div>
                   </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setPrepMode(!prepMode)}
-                      className={`px-4 py-2 rounded-lg transition-all duration-300 flex items-center gap-2 font-semibold transform hover:scale-105 active:scale-95 ${
-                        prepMode ? 'bg-green-600 text-white shadow-lg' : 'btn-secondary hover:border-green-200 hover:bg-green-50'
-                      }`}
-                    >
-                      <Clock className={`w-4 h-4 ${prepMode ? 'animate-pulse-soft' : ''}`} />
-                      {prepMode ? 'Prep Mode On' : 'Prep Mode'}
-                    </button>
-                    <button
-                      onClick={viewMode === 'today' ? generateForecast : generateWeeklyForecast}
-                      disabled={loading}
-                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                    >
-                      {loading ? 'Generating...' : `Generate ${viewMode === 'today' ? 'Forecast' : 'Weekly Forecast'}`}
-                    </button>
+
+                  {/* Peak Hours & Weather */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="flex items-center gap-2 text-gray-700 mb-1">
+                        <Clock className="w-4 h-4" />
+                        <span className="font-medium">Peak Hours</span>
+                      </div>
+                      <div className="text-lg font-semibold text-gray-900">{forecast.peak_hours}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="flex items-center gap-2 text-gray-700 mb-1">
+                        <WeatherIcon condition={hourlyWeather[0]?.condition || 'Sunny'} />
+                        <span className="font-medium">Weather Impact</span>
+                      </div>
+                      <div className="text-sm text-gray-900">{forecast.weather_impact}</div>
+                    </div>
+                  </div>
+
+                  {/* Prep Checklist */}
+                  <div className="border-t pt-4">
+                    <h3 className="font-semibold text-gray-700 mb-3">Prep Checklist</h3>
+                    <ul className="space-y-2">
+                      {forecast.prep_items.map((item, idx) => (
+                        <li key={idx} className="flex items-center gap-3 text-gray-700">
+                          <div className="w-5 h-5 rounded border-2 border-gray-300 flex-shrink-0" />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Staffing Note */}
+                  <div className="bg-amber-50 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-medium text-amber-900">Staffing</div>
+                        <div className="text-sm text-amber-800">{forecast.staffing_note}</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <Clock className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>Loading today's forecast...</p>
+                </div>
+              )}
+            </div>
 
-                {viewMode === 'today' && forecast && (
-                  <>
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="stat-card bg-blue-50 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
-                        <div className="flex items-center gap-2 text-blue-700 mb-2">
-                          <TrendingUp className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
-                          <span className="font-semibold">Peak Hours</span>
-                        </div>
-                        <p className="text-2xl font-bold text-blue-900">{forecast.peak_hours[0]}</p>
+            {/* Upcoming Events Alert */}
+            {upcomingEvents.length > 0 && (
+              <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                <h3 className="font-semibold text-purple-900 mb-2">Coming Up</h3>
+                {upcomingEvents.slice(0, 3).map((event) => (
+                  <div key={event.id} className="flex justify-between items-center py-2 border-b border-purple-100 last:border-0">
+                    <span className="text-purple-800">{event.name}</span>
+                    <div className="text-right">
+                      <span className="text-sm text-purple-600">
+                        {new Date(event.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </span>
+                      <span className={`ml-2 text-xs font-semibold px-2 py-1 rounded ${
+                        event.impactMultiplier >= 2 ? 'bg-red-100 text-red-700' :
+                        event.impactMultiplier >= 1.5 ? 'bg-orange-100 text-orange-700' :
+                        'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {event.impactMultiplier}x
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Quick Week Preview */}
+            <div className="bg-white rounded-xl shadow-md p-4">
+              <h3 className="font-semibold text-gray-700 mb-3">Week at a Glance</h3>
+              <div className="grid grid-cols-7 gap-2">
+                {weeklyWeather.map((day, idx) => (
+                  <div
+                    key={idx}
+                    className={`text-center p-2 rounded-lg ${idx === 0 ? 'bg-red-50 ring-2 ring-red-200' : 'bg-gray-50'}`}
+                  >
+                    <div className="text-xs font-medium text-gray-600">{day.day}</div>
+                    <WeatherIcon condition={day.condition} />
+                    <div className="text-xs text-gray-500">{day.temp}°</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PREP & STOCK TAB */}
+        {activeTab === 'prep' && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h2 className="text-lg font-semibold text-gray-700 mb-4">Inventory Check</h2>
+
+              {/* Alerts First */}
+              {MOCK_DATA.inventory.filter(item => getInventoryStatus(item).status === 'critical').length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center gap-2 text-red-800 font-semibold mb-2">
+                    <AlertCircle className="w-5 h-5" />
+                    Order Needed Today
+                  </div>
+                  {MOCK_DATA.inventory
+                    .filter(item => getInventoryStatus(item).status === 'critical')
+                    .map(item => (
+                      <div key={item.ingredient} className="flex justify-between py-1 text-red-700">
+                        <span>{item.ingredient}</span>
+                        <span className="font-semibold">{item.par_level - inventoryInputs[item.ingredient]} {item.unit} needed</span>
                       </div>
-                      <div className="stat-card bg-green-50 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
-                        <div className="flex items-center gap-2 text-green-700 mb-2">
-                          <CheckCircle className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
-                          <span className="font-semibold">Orders</span>
+                    ))
+                  }
+                </div>
+              )}
+
+              {/* Inventory List */}
+              <div className="space-y-3">
+                {MOCK_DATA.inventory.map((item) => {
+                  const status = getInventoryStatus(item);
+                  const onHand = inventoryInputs[item.ingredient];
+                  const percentage = Math.round((onHand / item.par_level) * 100);
+
+                  return (
+                    <div key={item.ingredient} className="bg-gray-50 rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center gap-3">
+                          <span className="font-medium text-gray-900">{item.ingredient}</span>
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                            status.color === 'red' ? 'bg-red-100 text-red-700' :
+                            status.color === 'orange' ? 'bg-orange-100 text-orange-700' :
+                            status.color === 'yellow' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-green-100 text-green-700'
+                          }`}>
+                            {status.label}
+                          </span>
                         </div>
-                        <p className="text-2xl font-bold text-green-900">
-                          {forecast.hourly_forecast.reduce((sum, h) => sum + h.predicted_orders, 0)}
-                        </p>
+                        <span className="text-sm text-gray-600">Par: {item.par_level} {item.unit}</span>
                       </div>
-                      <div className="stat-card bg-purple-50 animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
-                        <div className="flex items-center gap-2 text-purple-700 mb-2">
-                          <DollarSign className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
-                          <span className="font-semibold">Revenue</span>
+
+                      <div className="flex items-center gap-4">
+                        <div className="flex-1">
+                          <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div
+                              className={`h-3 rounded-full transition-all ${
+                                status.color === 'red' ? 'bg-red-500' :
+                                status.color === 'orange' ? 'bg-orange-500' :
+                                status.color === 'yellow' ? 'bg-yellow-500' :
+                                'bg-green-500'
+                              }`}
+                              style={{ width: `${Math.min(percentage, 100)}%` }}
+                            />
+                          </div>
                         </div>
-                        <p className="text-2xl font-bold text-purple-900">${forecast.revenue_estimate}</p>
-                      </div>
-                      <div className="stat-card bg-amber-50 animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
-                        <div className="flex items-center gap-2 text-amber-700 mb-2">
-                          <AlertCircle className="w-5 h-5 transform transition-transform duration-300 group-hover:scale-110" />
-                          <span className="font-semibold">Weather</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={onHand}
+                            onChange={(e) => setInventoryInputs({
+                              ...inventoryInputs,
+                              [item.ingredient]: parseInt(e.target.value) || 0
+                            })}
+                            className="w-16 px-2 py-1 text-center border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                          />
+                          <span className="text-sm text-gray-500">{item.unit}</span>
                         </div>
-                        <p className="text-sm text-amber-900">{forecast.weather_impact.substring(0, 30)}...</p>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
 
-                    <div className="bg-gray-50 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">Hourly Demand Forecast</h3>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={forecast.hourly_forecast}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="hour" tickFormatter={(h) => `${h}:00`} />
-                          <YAxis label={{ value: 'Orders', angle: -90, position: 'insideLeft' }} />
-                          <Tooltip />
-                          <Bar dataKey="predicted_orders" fill="#3b82f6" name="Predicted Orders" />
-                        </BarChart>
-                      </ResponsiveContainer>
+            {/* Today's Prep Tasks */}
+            {forecast && (
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h2 className="text-lg font-semibold text-gray-700 mb-4">Today's Prep</h2>
+                <ul className="space-y-3">
+                  {forecast.prep_items.map((item, idx) => (
+                    <li key={idx} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                      <div className="w-6 h-6 rounded-full border-2 border-gray-300 flex-shrink-0 cursor-pointer hover:bg-green-100 hover:border-green-500 transition-colors" />
+                      <span className="text-gray-700">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* CLOSE DAY TAB */}
+        {activeTab === 'close' && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h2 className="text-lg font-semibold text-gray-700 mb-2">Close Out Today</h2>
+              <p className="text-gray-500 text-sm mb-6">Track your actual numbers to improve future predictions</p>
+
+              {showCloseSuccess && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <span className="text-green-800 font-medium">Day closed! Numbers saved.</span>
+                </div>
+              )}
+
+              {/* Comparison with forecast */}
+              {forecast && (
+                <div className="bg-blue-50 rounded-lg p-4 mb-6">
+                  <div className="text-sm text-blue-700 mb-1">Today's Forecast</div>
+                  <div className="flex gap-6">
+                    <div>
+                      <span className="text-2xl font-bold text-blue-900">{forecast.expected_orders}</span>
+                      <span className="text-blue-700 ml-1">orders</span>
                     </div>
-
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">
-                        {prepMode ? 'Morning Prep Checklist' : 'Recommended Actions'}
-                      </h3>
-                      <ul className="space-y-3">
-                        {forecast.actions.map((action, idx) => (
-                          <li key={idx} className="flex items-start gap-3">
-                            <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
-                            <span className="text-gray-700">{action}</span>
-                          </li>
-                        ))}
-                      </ul>
+                    <div>
+                      <span className="text-2xl font-bold text-blue-900">${forecast.revenue_estimate.toLocaleString()}</span>
+                      <span className="text-blue-700 ml-1">revenue</span>
                     </div>
-                  </>
-                )}
+                  </div>
+                </div>
+              )}
 
-                {viewMode === 'week' && weeklyForecast && (
-                  <>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="bg-blue-50 rounded-lg p-4">
-                        <div className="flex items-center gap-2 text-blue-700 mb-2">
-                          <Calendar className="w-5 h-5" />
-                          <span className="font-semibold">Total Orders</span>
+              {/* Simple Input Form */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Actual Orders</label>
+                  <input
+                    type="number"
+                    value={closeForm.orders}
+                    onChange={(e) => setCloseForm({ ...closeForm, orders: e.target.value })}
+                    placeholder="How many orders today?"
+                    className="w-full px-4 py-3 text-lg border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Actual Revenue ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={closeForm.revenue}
+                    onChange={(e) => setCloseForm({ ...closeForm, revenue: e.target.value })}
+                    placeholder="Total sales"
+                    className="w-full px-4 py-3 text-lg border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Notes (optional)</label>
+                  <input
+                    type="text"
+                    value={closeForm.notes}
+                    onChange={(e) => setCloseForm({ ...closeForm, notes: e.target.value })}
+                    placeholder="Any notes? (e.g., event nearby, staff shortage)"
+                    className="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  />
+                </div>
+                <button
+                  onClick={handleCloseDay}
+                  className="w-full bg-red-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-red-700 transition-colors shadow-lg"
+                >
+                  Close Day
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TRENDS TAB */}
+        {activeTab === 'trends' && (
+          <div className="space-y-4">
+            {(() => {
+              const perf = getRecentPerformance();
+
+              if (!perf) {
+                return (
+                  <div className="bg-white rounded-xl shadow-md p-8 text-center">
+                    <BarChart3 className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                    <h3 className="text-lg font-semibold text-gray-700 mb-2">No Data Yet</h3>
+                    <p className="text-gray-500">
+                      Close out a few days to see your trends here.
+                    </p>
+                    <button
+                      onClick={() => setActiveTab('close')}
+                      className="mt-4 text-red-600 font-medium hover:text-red-700 inline-flex items-center gap-1"
+                    >
+                      Close today's numbers <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <>
+                  {/* Week Performance */}
+                  <div className="bg-white rounded-xl shadow-md p-6">
+                    <h2 className="text-lg font-semibold text-gray-700 mb-4">This Week vs Last Week</h2>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <div className="text-sm text-gray-600 mb-1">Orders ({perf.lastWeek.days} days)</div>
+                        <div className="text-3xl font-bold text-gray-900">{perf.lastWeek.orders}</div>
+                        <div className={`flex items-center gap-1 mt-2 text-sm font-medium ${
+                          perf.orderChange >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {perf.orderChange >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                          {perf.orderChange >= 0 ? '+' : ''}{perf.orderChange.toFixed(1)}% vs last week
                         </div>
-                        <p className="text-2xl font-bold text-blue-900">{weeklyForecast.week_summary.total_orders}</p>
                       </div>
-                      <div className="bg-green-50 rounded-lg p-4">
-                        <div className="flex items-center gap-2 text-green-700 mb-2">
-                          <DollarSign className="w-5 h-5" />
-                          <span className="font-semibold">Week Revenue</span>
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <div className="text-sm text-gray-600 mb-1">Revenue</div>
+                        <div className="text-3xl font-bold text-gray-900">${perf.lastWeek.revenue.toLocaleString()}</div>
+                        <div className={`flex items-center gap-1 mt-2 text-sm font-medium ${
+                          perf.revenueChange >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {perf.revenueChange >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                          {perf.revenueChange >= 0 ? '+' : ''}{perf.revenueChange.toFixed(1)}% vs last week
                         </div>
-                        <p className="text-2xl font-bold text-green-900">${weeklyForecast.week_summary.total_revenue.toLocaleString()}</p>
-                      </div>
-                      <div className="bg-purple-50 rounded-lg p-4">
-                        <div className="flex items-center gap-2 text-purple-700 mb-2">
-                          <TrendingUp className="w-5 h-5" />
-                          <span className="font-semibold">Busiest Day</span>
-                        </div>
-                        <p className="text-2xl font-bold text-purple-900">{weeklyForecast.week_summary.busiest_day}</p>
                       </div>
                     </div>
+                  </div>
 
-                    <div className="bg-gray-50 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">7-Day Forecast Overview</h3>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <LineChart data={weeklyForecast.daily_forecasts}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="day" />
-                          <YAxis yAxisId="left" label={{ value: 'Orders', angle: -90, position: 'insideLeft' }} />
-                          <YAxis yAxisId="right" orientation="right" label={{ value: 'Revenue ($)', angle: 90, position: 'insideRight' }} />
-                          <Tooltip />
-                          <Legend />
-                          <Line yAxisId="left" type="monotone" dataKey="predicted_orders" stroke="#3b82f6" strokeWidth={2} name="Orders" />
-                          <Line yAxisId="right" type="monotone" dataKey="revenue_estimate" stroke="#10b981" strokeWidth={2} name="Revenue" />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3">
-                      {weeklyForecast.daily_forecasts.map((day, idx) => (
-                        <div key={idx} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className="text-center">
-                                <p className="text-sm text-gray-500">{day.date}</p>
-                                <p className="text-xl font-bold text-gray-900">{day.day}</p>
-                              </div>
-                              <div className="h-12 w-px bg-gray-200"></div>
-                              <div className="flex items-center gap-6">
-                                <div>
-                                  <p className="text-sm text-gray-500">Orders</p>
-                                  <p className="text-lg font-bold text-blue-900">{day.predicted_orders}</p>
-                                </div>
-                                <div>
-                                  <p className="text-sm text-gray-500">Revenue</p>
-                                  <p className="text-lg font-bold text-green-900">${day.revenue_estimate}</p>
-                                </div>
-                                <div>
-                                  <p className="text-sm text-gray-500">Peak</p>
-                                  <p className="text-lg font-semibold text-gray-900">{day.peak_window}</p>
-                                </div>
-                              </div>
+                  {/* Recent Days */}
+                  <div className="bg-white rounded-xl shadow-md p-6">
+                    <h3 className="text-lg font-semibold text-gray-700 mb-4">Recent Days</h3>
+                    <div className="space-y-2">
+                      {perf.recentDays.map((day, idx) => (
+                        <div key={idx} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-0">
+                          <span className="text-gray-700">
+                            {new Date(day.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                          </span>
+                          <div className="flex gap-6 text-right">
+                            <div>
+                              <span className="font-semibold text-gray-900">{day.orders}</span>
+                              <span className="text-gray-500 text-sm ml-1">orders</span>
                             </div>
-                            <div className="text-right max-w-md">
-                              <p className="text-sm text-gray-700">{day.key_note}</p>
-                              <span className={`inline-block mt-2 px-3 py-1 rounded-full text-xs font-semibold ${
-                                day.weather_impact === 'none' ? 'bg-green-100 text-green-800' :
-                                day.weather_impact === 'low' ? 'bg-blue-100 text-blue-800' :
-                                'bg-amber-100 text-amber-800'
-                              }`}>
-                                {day.weather_impact} weather impact
-                              </span>
+                            <div>
+                              <span className="font-semibold text-gray-900">${day.revenue.toLocaleString()}</span>
                             </div>
                           </div>
                         </div>
                       ))}
                     </div>
-
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">Week Prep Priorities</h3>
-                      <ul className="space-y-3">
-                        {weeklyForecast.week_summary.prep_priorities.map((priority, idx) => (
-                          <li key={idx} className="flex items-start gap-3">
-                            <CheckCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                            <span className="text-gray-700">{priority}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </>
-                )}
-
-                {!forecast && !weeklyForecast && (
-                  <div className="text-center py-12 text-gray-500">
-                    Select a view mode and click "Generate" to analyze operations
                   </div>
-                )}
-              </div>
-            )}
 
-            {activeTab === 'inventory' && (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-2xl font-bold text-gray-900">Inventory Planning</h2>
-                  <button
-                    onClick={generateInventoryPlan}
-                    disabled={loading}
-                    className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
-                  >
-                    {loading ? 'Analyzing...' : 'Generate Plan'}
-                  </button>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="text-lg font-semibold mb-4">Current Inventory Levels</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {MOCK_DATA.inventory.map((item) => (
-                      <div key={item.ingredient} className="bg-white rounded-lg p-4 border border-gray-200">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          {item.ingredient} ({item.unit})
-                        </label>
-                        <div className="flex items-center gap-4">
-                          <input
-                            type="number"
-                            value={inventoryInputs[item.ingredient]}
-                            onChange={(e) => setInventoryInputs({
-                              ...inventoryInputs,
-                              [item.ingredient]: parseInt(e.target.value) || 0
-                            })}
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  {/* Simple Chart */}
+                  {perf.recentDays.length >= 3 && (
+                    <div className="bg-white rounded-xl shadow-md p-6">
+                      <h3 className="text-lg font-semibold text-gray-700 mb-4">Order Trend</h3>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <BarChart data={[...perf.recentDays].reverse()}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis
+                            dataKey="date"
+                            tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { weekday: 'short' })}
                           />
-                          <span className="text-sm text-gray-500">Par: {item.par_level}</span>
-                        </div>
-                        <div className="mt-2">
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div 
-                              className={`h-2 rounded-full ${
-                                (inventoryInputs[item.ingredient] / item.par_level) < 0.5 ? 'bg-red-600' :
-                                (inventoryInputs[item.ingredient] / item.par_level) < 0.8 ? 'bg-yellow-600' :
-                                'bg-green-600'
-                              }`}
-                              style={{ width: `${Math.min((inventoryInputs[item.ingredient] / item.par_level) * 100, 100)}%` }}
-                            ></div>
+                          <YAxis />
+                          <Tooltip
+                            labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                          />
+                          <Bar dataKey="orders" fill="#dc2626" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+
+                  {/* Forecast Accuracy - Simple */}
+                  {(() => {
+                    const accuracy = analyticsService.getAccuracyStats();
+                    if (accuracy.totalForecasts === 0) return null;
+
+                    return (
+                      <div className="bg-white rounded-xl shadow-md p-6">
+                        <h3 className="text-lg font-semibold text-gray-700 mb-4">Forecast Accuracy</h3>
+                        <div className="flex items-center gap-4">
+                          <div className="text-4xl font-bold text-gray-900">{accuracy.averageAccuracy.toFixed(0)}%</div>
+                          <div className="text-gray-600">
+                            <div className="text-sm">Average accuracy</div>
+                            <div className="text-xs text-gray-500">{accuracy.totalForecasts} forecasts tracked</div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {inventoryPlan && (
-                  <>
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex justify-between items-center">
-                      <p className="text-red-900 font-semibold">{inventoryPlan.status}</p>
-                      <div className="text-right">
-                        <p className="text-sm text-red-700">Estimated Cost</p>
-                        <p className="text-xl font-bold text-red-900">${inventoryPlan.cost_estimate}</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">Priority Buy List</h3>
-                      <div className="space-y-3">
-                        {inventoryPlan.buy_list.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3">
-                                <span className={`px-2 py-1 text-xs font-semibold rounded ${
-                                  item.priority === 'critical' ? 'bg-red-100 text-red-800' :
-                                  item.priority === 'high' ? 'bg-orange-100 text-orange-800' :
-                                  'bg-yellow-100 text-yellow-800'
-                                }`}>
-                                  {item.priority.toUpperCase()}
-                                </span>
-                                <span className="font-semibold text-gray-900">{item.ingredient}</span>
-                              </div>
-                              <p className="text-sm text-gray-600 mt-1">{item.reason}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-xl font-bold text-gray-900">{item.quantity} {item.unit}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">Prep Tasks</h3>
-                      <ul className="space-y-3">
-                        {inventoryPlan.prep_tasks.map((task, idx) => (
-                          <li key={idx} className="flex items-start gap-3">
-                            <CheckCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                            <span className="text-gray-700">{task}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </>
-                )}
-
-                {!inventoryPlan && (
-                  <div className="text-center py-12 text-gray-500">
-                    Update inventory levels and click "Generate Plan"
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'scheduler' && (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-2xl font-bold text-gray-900">Staff Scheduler</h2>
-                  <div className="flex gap-3">
-                    {currentSchedule && (
-                      <button
-                        onClick={handleExportSchedule}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
-                      >
-                        Export CSV
-                      </button>
-                    )}
-                    <button
-                      onClick={generateSchedule}
-                      disabled={scheduleLoading}
-                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                    >
-                      {scheduleLoading ? 'Generating...' : 'Generate Schedule'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Upcoming Events Alert */}
-                {upcomingEvents.length > 0 && (
-                  <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
-                      <div>
-                        <h3 className="font-semibold text-amber-900">Upcoming Special Events</h3>
-                        <div className="mt-2 space-y-1">
-                          {upcomingEvents.map((event) => (
-                            <div key={event.id} className="text-sm text-amber-800">
-                              <span className="font-medium">{event.name}</span> on {new Date(event.date).toLocaleDateString()} -
-                              <span className={`ml-1 font-semibold ${
-                                event.impact === 'very_high' ? 'text-red-600' :
-                                event.impact === 'high' ? 'text-orange-600' :
-                                'text-yellow-600'
-                              }`}>
-                                {event.impactMultiplier}x demand
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Employee Summary */}
-                <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="text-lg font-semibold mb-4">Staff Overview</h3>
-                  <div className="grid grid-cols-5 gap-4">
-                    {['cook', 'server', 'delivery', 'prep', 'manager'].map((role) => {
-                      const count = employees.filter((emp) => emp.role === role && emp.active).length;
-                      return (
-                        <div key={role} className="bg-white rounded-lg p-4 border border-gray-200">
-                          <div className="text-2xl font-bold text-gray-900">{count}</div>
-                          <div className="text-sm text-gray-600 capitalize">{role}s</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Schedule Display */}
-                {currentSchedule ? (
-                  <>
-                    {/* Labor Cost Summary */}
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="bg-blue-50 rounded-lg p-4">
-                        <div className="text-sm text-blue-700 mb-1">Total Hours</div>
-                        <div className="text-2xl font-bold text-blue-900">{currentSchedule.totalLaborHours}</div>
-                      </div>
-                      <div className="bg-green-50 rounded-lg p-4">
-                        <div className="text-sm text-green-700 mb-1">Labor Cost</div>
-                        <div className="text-2xl font-bold text-green-900">${currentSchedule.totalLaborCost.toFixed(0)}</div>
-                      </div>
-                      <div className="bg-purple-50 rounded-lg p-4">
-                        <div className="text-sm text-purple-700 mb-1">Projected Revenue</div>
-                        <div className="text-2xl font-bold text-purple-900">${currentSchedule.projectedRevenue.toFixed(0)}</div>
-                      </div>
-                      <div className={`rounded-lg p-4 ${
-                        currentSchedule.laborPercentage <= 30 ? 'bg-green-50' :
-                        currentSchedule.laborPercentage <= 35 ? 'bg-yellow-50' :
-                        'bg-red-50'
-                      }`}>
-                        <div className={`text-sm mb-1 ${
-                          currentSchedule.laborPercentage <= 30 ? 'text-green-700' :
-                          currentSchedule.laborPercentage <= 35 ? 'text-yellow-700' :
-                          'text-red-700'
-                        }`}>Labor %</div>
-                        <div className={`text-2xl font-bold ${
-                          currentSchedule.laborPercentage <= 30 ? 'text-green-900' :
-                          currentSchedule.laborPercentage <= 35 ? 'text-yellow-900' :
-                          'text-red-900'
-                        }`}>{currentSchedule.laborPercentage.toFixed(1)}%</div>
-                      </div>
-                    </div>
-
-                    {/* Weekly Schedule Grid */}
-                    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="p-4 bg-gray-50 border-b border-gray-200">
-                        <h3 className="text-lg font-semibold">
-                          Week of {new Date(currentSchedule.weekStartDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                        </h3>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full">
-                          <thead className="bg-gray-50 border-b border-gray-200">
-                            <tr>
-                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Employee</th>
-                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Role</th>
-                              {getWeekDates(currentSchedule.weekStartDate).map((date) => (
-                                <th key={date} className="px-4 py-3 text-center text-sm font-semibold text-gray-700">
-                                  <div>{new Date(date).toLocaleDateString('en-US', { weekday: 'short' })}</div>
-                                  <div className="text-xs text-gray-500">{new Date(date).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>
-                                </th>
-                              ))}
-                              <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700">Total Hours</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-200">
-                            {employees.filter(emp => emp.active).map((employee) => {
-                              const employeeShifts = currentSchedule.shifts.filter((s) => s.employeeId === employee.id);
-                              const weekDates = getWeekDates(currentSchedule.weekStartDate);
-                              const totalHours = employeeShifts.reduce((sum, shift) => {
-                                const [startH, startM] = shift.startTime.split(':').map(Number);
-                                const [endH, endM] = shift.endTime.split(':').map(Number);
-                                return sum + (endH - startH + (endM - startM) / 60);
-                              }, 0);
-
-                              if (employeeShifts.length === 0) return null;
-
-                              return (
-                                <tr key={employee.id} className="hover:bg-gray-50 transition-colors duration-200">
-                                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{employee.name}</td>
-                                  <td className="px-4 py-3 text-sm text-gray-600 capitalize">{employee.role}</td>
-                                  {weekDates.map((date) => {
-                                    const shift = employeeShifts.find((s) => s.date === date);
-                                    return (
-                                      <td key={date} className="px-2 py-3 text-center">
-                                        {shift ? (
-                                          <div className="text-xs bg-blue-100 text-blue-900 rounded px-2 py-1">
-                                            <div className="font-semibold">{shift.startTime}-{shift.endTime}</div>
-                                            <div className="text-[10px] text-blue-700 capitalize">{shift.shiftType.replace('_', ' ')}</div>
-                                          </div>
-                                        ) : (
-                                          <span className="text-gray-300">-</span>
-                                        )}
-                                      </td>
-                                    );
-                                  })}
-                                  <td className="px-4 py-3 text-center text-sm font-semibold text-gray-900">
-                                    {totalHours.toFixed(1)}h
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* Daily Breakdown */}
-                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">Daily Coverage</h3>
-                      <div className="grid grid-cols-7 gap-3">
-                        {getWeekDates(currentSchedule.weekStartDate).map((date) => {
-                          const dayShifts = currentSchedule.shifts.filter((s) => s.date === date);
-                          const uniqueStaff = new Set(dayShifts.map((s) => s.employeeId)).size;
-                          const totalHours = dayShifts.reduce((sum, shift) => {
-                            const [startH, startM] = shift.startTime.split(':').map(Number);
-                            const [endH, endM] = shift.endTime.split(':').map(Number);
-                            return sum + (endH - startH + (endM - startM) / 60);
-                          }, 0);
-
-                          return (
-                            <div key={date} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                              <div className="text-sm font-semibold text-gray-900 mb-2">
-                                {new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })}
-                              </div>
-                              <div className="space-y-1 text-xs text-gray-600">
-                                <div>{uniqueStaff} staff</div>
-                                <div>{totalHours.toFixed(1)} hours</div>
-                                <div className="text-[10px] text-gray-500">
-                                  {dayShifts.filter(s => s.role === 'cook').length}C {dayShifts.filter(s => s.role === 'server').length}S {dayShifts.filter(s => s.role === 'delivery').length}D
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center py-12 text-gray-500">
-                    <Calendar className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-                    <p className="text-lg">Click "Generate Schedule" to create an AI-optimized staff schedule</p>
-                    <p className="text-sm mt-2">Schedule will account for demand forecasts, weather, and special events</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'promo' && (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-2xl font-bold text-gray-900">Promotional Campaign Studio</h2>
-                  <button
-                    onClick={generatePromo}
-                    disabled={loading}
-                    className="px-6 py-2 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 transition-all shadow-lg font-semibold"
-                  >
-                    {loading ? 'Generating...' : 'Generate Promo'}
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="bg-gray-50 rounded-lg p-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Tone</label>
-                    <select
-                      value={promoSettings.tone}
-                      onChange={(e) => setPromoSettings({ ...promoSettings, tone: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="classic">Classic</option>
-                      <option value="casual">Casual</option>
-                      <option value="urgent">Urgent</option>
-                    </select>
-                  </div>
-
-                  <div className="bg-gray-50 rounded-lg p-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Channel</label>
-                    <select
-                      value={promoSettings.channel}
-                      onChange={(e) => setPromoSettings({ ...promoSettings, channel: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="email">Email</option>
-                      <option value="social">Social Media</option>
-                    </select>
-                  </div>
-                </div>
-
-                {promo && (
-                  <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-lg">
-                    <div className="bg-gradient-to-r from-red-600 via-orange-600 to-red-600 p-6 text-white relative overflow-hidden">
-                      <div className="absolute inset-0 bg-black opacity-5"></div>
-                      <div className="relative z-10">
-                        <h3 className="text-2xl font-bold">{promo.offer_name}</h3>
-                        <p className="text-red-100 mt-2 text-lg">{promo.copy_short}</p>
-                      </div>
-                    </div>
-                    <div className="p-6">
-                      <div className="mb-4 flex justify-between items-center">
-                        <span className="inline-block px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-semibold">
-                          {promo.discount}
-                        </span>
-                        <span className="text-sm text-gray-600">Expected Lift: {promo.target_lift}</span>
-                      </div>
-                      <p className="text-gray-700 leading-relaxed">{promo.copy_email}</p>
-                      <div className="mt-6 pt-6 border-t border-gray-200">
-                        <p className="text-sm text-gray-500">Ready to send via {promoSettings.channel}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {!promo && (
-                  <div className="text-center py-12 text-gray-500">
-                    Configure settings and click "Generate Promo" to create a campaign
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'history' && (
-              <div className="space-y-6 tab-content">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-2xl font-bold text-gray-900">History & Analytics</h2>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={handleImportData}
-                      className="btn-secondary"
-                    >
-                      Import Data
-                    </button>
-                    <button
-                      onClick={handleExportAllData}
-                      className="btn-primary"
-                    >
-                      Export All Data
-                    </button>
-                  </div>
-                </div>
-
-                {/* Summary Stats */}
-                {(() => {
-                  const summary = analyticsService.getRecentSummary();
-                  const accuracyStats = analyticsService.getAccuracyStats();
-                  const storageStats = storageService.getStorageStats();
-
-                  return (
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="stat-card bg-blue-50 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
-                        <div className="flex items-center gap-2 text-blue-700 mb-2">
-                          <Calendar className="w-5 h-5" />
-                          <span className="font-semibold">Total Records</span>
-                        </div>
-                        <p className="text-2xl font-bold text-blue-900">{summary.totalRecords}</p>
-                        <p className="text-xs text-blue-700 mt-1">{summary.recentDays} days tracked</p>
-                      </div>
-                      <div className="stat-card bg-green-50 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
-                        <div className="flex items-center gap-2 text-green-700 mb-2">
-                          <CheckCircle className="w-5 h-5" />
-                          <span className="font-semibold">Avg Accuracy</span>
-                        </div>
-                        <p className="text-2xl font-bold text-green-900">{accuracyStats.averageAccuracy.toFixed(1)}%</p>
-                        <p className="text-xs text-green-700 mt-1">{accuracyStats.totalForecasts} forecasts</p>
-                      </div>
-                      <div className="stat-card bg-purple-50 animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
-                        <div className="flex items-center gap-2 text-purple-700 mb-2">
-                          <TrendingUp className="w-5 h-5" />
-                          <span className="font-semibold">Order Growth</span>
-                        </div>
-                        <p className="text-2xl font-bold text-purple-900">
-                          {summary.weekOverWeekOrderGrowth > 0 ? '+' : ''}{summary.weekOverWeekOrderGrowth.toFixed(1)}%
+                        <p className="text-sm text-gray-500 mt-4">
+                          The more you track, the better predictions get.
                         </p>
-                        <p className="text-xs text-purple-700 mt-1">Week over week</p>
-                      </div>
-                      <div className="stat-card bg-amber-50 animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
-                        <div className="flex items-center gap-2 text-amber-700 mb-2">
-                          <DollarSign className="w-5 h-5" />
-                          <span className="font-semibold">Revenue Growth</span>
-                        </div>
-                        <p className="text-2xl font-bold text-amber-900">
-                          {summary.weekOverWeekRevenueGrowth > 0 ? '+' : ''}{summary.weekOverWeekRevenueGrowth.toFixed(1)}%
-                        </p>
-                        <p className="text-xs text-amber-700 mt-1">Week over week</p>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Actual Data Entry Form */}
-                <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-6 border border-blue-200">
-                  <h3 className="text-lg font-semibold mb-4 text-gray-900">Track Actual Performance</h3>
-                  <div className="grid grid-cols-4 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
-                      <input
-                        type="date"
-                        value={actualDataForm.date}
-                        onChange={(e) => setActualDataForm({ ...actualDataForm, date: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Actual Orders</label>
-                      <input
-                        type="number"
-                        value={actualDataForm.actualOrders}
-                        onChange={(e) => setActualDataForm({ ...actualDataForm, actualOrders: e.target.value })}
-                        placeholder="e.g., 125"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Actual Revenue ($)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={actualDataForm.actualRevenue}
-                        onChange={(e) => setActualDataForm({ ...actualDataForm, actualRevenue: e.target.value })}
-                        placeholder="e.g., 1750.00"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div className="flex items-end">
-                      <button
-                        onClick={handleSubmitActualData}
-                        className="w-full btn-primary"
-                      >
-                        Save Data
-                      </button>
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
-                    <input
-                      type="text"
-                      value={actualDataForm.notes}
-                      onChange={(e) => setActualDataForm({ ...actualDataForm, notes: e.target.value })}
-                      placeholder="e.g., Busy Friday night, rain affected delivery"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
-
-                {/* Forecast Accuracy */}
-                {(() => {
-                  const accuracyData = analyticsService.calculateForecastAccuracy();
-                  const accuracyStats = analyticsService.getAccuracyStats();
-
-                  if (accuracyData.length === 0) {
-                    return (
-                      <div className="bg-gray-50 rounded-lg p-12 text-center border border-gray-200">
-                        <AlertCircle className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                        <p className="text-gray-600 font-medium">No forecast accuracy data available yet</p>
-                        <p className="text-sm text-gray-500 mt-2">Generate forecasts and track actual data to see accuracy metrics</p>
                       </div>
                     );
-                  }
-
-                  return (
-                    <>
-                      <div className="bg-white border border-gray-200 rounded-lg p-6">
-                        <h3 className="text-lg font-semibold mb-4">Forecast Accuracy Overview</h3>
-                        <div className="grid grid-cols-3 gap-4 mb-6">
-                          <div className="bg-green-50 rounded-lg p-4">
-                            <div className="text-sm text-green-700 mb-1">Accurate Forecasts</div>
-                            <div className="text-2xl font-bold text-green-900">
-                              {accuracyStats.accurateForecasts} / {accuracyStats.totalForecasts}
-                            </div>
-                            <div className="text-xs text-green-700 mt-1">Within 10% variance</div>
-                          </div>
-                          <div className="bg-blue-50 rounded-lg p-4">
-                            <div className="text-sm text-blue-700 mb-1">Over-Forecasted</div>
-                            <div className="text-2xl font-bold text-blue-900">{accuracyStats.overForecasts}</div>
-                            <div className="text-xs text-blue-700 mt-1">Predicted higher than actual</div>
-                          </div>
-                          <div className="bg-amber-50 rounded-lg p-4">
-                            <div className="text-sm text-amber-700 mb-1">Under-Forecasted</div>
-                            <div className="text-2xl font-bold text-amber-900">{accuracyStats.underForecasts}</div>
-                            <div className="text-xs text-amber-700 mt-1">Predicted lower than actual</div>
-                          </div>
-                        </div>
-                        <ResponsiveContainer width="100%" height={300}>
-                          <LineChart data={accuracyData}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="date" tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
-                            <YAxis yAxisId="left" label={{ value: 'Orders', angle: -90, position: 'insideLeft' }} />
-                            <YAxis yAxisId="right" orientation="right" label={{ value: 'Accuracy %', angle: 90, position: 'insideRight' }} />
-                            <Tooltip
-                              labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                            />
-                            <Legend />
-                            <Line yAxisId="left" type="monotone" dataKey="predictedOrders" stroke="#3b82f6" strokeWidth={2} name="Predicted Orders" />
-                            <Line yAxisId="left" type="monotone" dataKey="actualOrders" stroke="#10b981" strokeWidth={2} name="Actual Orders" />
-                            <Line yAxisId="right" type="monotone" dataKey="accuracy" stroke="#f59e0b" strokeWidth={2} name="Accuracy %" />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* Best and Worst Days */}
-                      {accuracyStats.bestDay && accuracyStats.worstDay && (
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                            <div className="flex items-center gap-2 mb-3">
-                              <CheckCircle className="w-5 h-5 text-green-600" />
-                              <h4 className="font-semibold text-green-900">Best Forecast</h4>
-                            </div>
-                            <div className="text-sm text-green-800">
-                              <p className="font-medium">{new Date(accuracyStats.bestDay.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
-                              <p className="mt-2">Accuracy: <span className="font-bold">{accuracyStats.bestDay.accuracy.toFixed(1)}%</span></p>
-                              <p>Predicted: {accuracyStats.bestDay.predictedOrders} orders</p>
-                              <p>Actual: {accuracyStats.bestDay.actualOrders} orders</p>
-                            </div>
-                          </div>
-                          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                            <div className="flex items-center gap-2 mb-3">
-                              <AlertCircle className="w-5 h-5 text-red-600" />
-                              <h4 className="font-semibold text-red-900">Needs Improvement</h4>
-                            </div>
-                            <div className="text-sm text-red-800">
-                              <p className="font-medium">{new Date(accuracyStats.worstDay.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
-                              <p className="mt-2">Accuracy: <span className="font-bold">{accuracyStats.worstDay.accuracy.toFixed(1)}%</span></p>
-                              <p>Predicted: {accuracyStats.worstDay.predictedOrders} orders</p>
-                              <p>Actual: {accuracyStats.worstDay.actualOrders} orders</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-
-                {/* Order & Revenue Trends */}
-                {(() => {
-                  const orderTrend = analyticsService.getOrderTrend();
-                  const revenueTrend = analyticsService.getRevenueTrend();
-
-                  if (orderTrend.length > 0) {
-                    return (
-                      <div className="bg-white border border-gray-200 rounded-lg p-6">
-                        <h3 className="text-lg font-semibold mb-4">Performance Trends</h3>
-                        <div className="grid grid-cols-2 gap-6">
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-700 mb-3">Order Volume</h4>
-                            <ResponsiveContainer width="100%" height={200}>
-                              <LineChart data={orderTrend}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="date" tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
-                                <YAxis />
-                                <Tooltip labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} />
-                                <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} name="Orders" />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-700 mb-3">Revenue</h4>
-                            <ResponsiveContainer width="100%" height={200}>
-                              <LineChart data={revenueTrend}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="date" tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
-                                <YAxis />
-                                <Tooltip labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} />
-                                <Line type="monotone" dataKey="value" stroke="#10b981" strokeWidth={2} name="Revenue" />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-
-                {/* Schedule Performance */}
-                {(() => {
-                  const schedulePerformance = analyticsService.getSchedulePerformance();
-
-                  if (schedulePerformance.length > 0) {
-                    return (
-                      <div className="bg-white border border-gray-200 rounded-lg p-6">
-                        <h3 className="text-lg font-semibold mb-4">Schedule Performance</h3>
-                        <div className="space-y-3">
-                          {schedulePerformance.slice(0, 5).map((perf) => (
-                            <div key={perf.scheduleId} className="bg-gray-50 rounded-lg p-4">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="font-medium text-gray-900">
-                                  Week of {new Date(perf.weekStartDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                </span>
-                                {perf.variance !== undefined && (
-                                  <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                                    perf.variance <= 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                                  }`}>
-                                    {perf.variance > 0 ? '+' : ''}${perf.variance.toFixed(0)} ({perf.variancePercent?.toFixed(1)}%)
-                                  </span>
-                                )}
-                              </div>
-                              <div className="grid grid-cols-4 gap-4 text-sm">
-                                <div>
-                                  <span className="text-gray-600">Planned Hours:</span>
-                                  <div className="font-semibold text-gray-900">{perf.plannedHours.toFixed(1)}h</div>
-                                </div>
-                                {perf.actualHours !== undefined && (
-                                  <div>
-                                    <span className="text-gray-600">Actual Hours:</span>
-                                    <div className="font-semibold text-gray-900">{perf.actualHours.toFixed(1)}h</div>
-                                  </div>
-                                )}
-                                <div>
-                                  <span className="text-gray-600">Planned Cost:</span>
-                                  <div className="font-semibold text-gray-900">${perf.plannedCost.toFixed(0)}</div>
-                                </div>
-                                {perf.actualCost !== undefined && (
-                                  <div>
-                                    <span className="text-gray-600">Actual Cost:</span>
-                                    <div className="font-semibold text-gray-900">${perf.actualCost.toFixed(0)}</div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-
-                {/* Storage Management */}
-                {(() => {
-                  const storageStats = storageService.getStorageStats();
-
-                  return (
-                    <div className="bg-gradient-to-r from-gray-50 to-blue-50 border border-gray-200 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">Storage Management</h3>
-                      <div className="grid grid-cols-2 gap-6">
-                        <div>
-                          <div className="mb-3">
-                            <div className="flex justify-between text-sm mb-2">
-                              <span className="text-gray-700">Storage Used</span>
-                              <span className="font-semibold text-gray-900">
-                                {(storageStats.used / 1024).toFixed(2)} KB / {(storageStats.available / 1024 / 1024).toFixed(1)} MB
-                              </span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3">
-                              <div
-                                className={`h-3 rounded-full transition-all duration-500 ${
-                                  storageStats.percentage < 50 ? 'bg-green-600' :
-                                  storageStats.percentage < 80 ? 'bg-yellow-600' :
-                                  'bg-red-600'
-                                }`}
-                                style={{ width: `${storageStats.percentage}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3 text-sm mt-4">
-                            {Object.entries(storageStats.recordCounts).map(([key, count]) => (
-                              <div key={key} className="flex justify-between py-2 px-3 bg-white rounded border border-gray-200">
-                                <span className="text-gray-600 capitalize">{key.replace('pizzai_', '')}</span>
-                                <span className="font-semibold text-gray-900">{count}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="flex flex-col justify-center gap-3">
-                          <button
-                            onClick={handleClearOldData}
-                            className="px-4 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
-                          >
-                            Clear Data Older Than 90 Days
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm('This will delete ALL stored data. Are you sure?')) {
-                                storageService.clearAllData();
-                                setAnalyticsRefresh(prev => prev + 1);
-                                alert('All data cleared successfully!');
-                              }
-                            }}
-                            className="px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
-                          >
-                            Clear All Data
-                          </button>
-                          <p className="text-xs text-gray-600 mt-2">
-                            Data is automatically cleaned up after 90 days. Export your data regularly for long-term storage.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
+                  })()}
+                </>
+              );
+            })()}
           </div>
-        </div>
+        )}
+
+        {/* Footer */}
+        <footer className="text-center text-gray-400 text-sm mt-8 pb-4">
+          PizzAI - Helping you prep smarter
+        </footer>
       </div>
     </div>
   );
