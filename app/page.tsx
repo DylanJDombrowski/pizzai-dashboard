@@ -127,6 +127,15 @@ const PizzAIDashboard = () => {
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [upcomingEvents, setUpcomingEvents] = useState<SpecialEvent[]>([]);
 
+  // History & Analytics state
+  const [actualDataForm, setActualDataForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    actualOrders: '',
+    actualRevenue: '',
+    notes: ''
+  });
+  const [analyticsRefresh, setAnalyticsRefresh] = useState(0);
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 60000);
     return () => clearInterval(timer);
@@ -506,6 +515,81 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
     a.download = `schedule_${currentSchedule.weekStartDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // History & Analytics handlers
+  const handleSubmitActualData = () => {
+    if (!actualDataForm.actualOrders || !actualDataForm.actualRevenue) {
+      alert('Please enter both orders and revenue');
+      return;
+    }
+
+    storageService.saveActualData(
+      actualDataForm.date,
+      parseInt(actualDataForm.actualOrders),
+      parseFloat(actualDataForm.actualRevenue),
+      actualDataForm.notes
+    );
+
+    // Reset form
+    setActualDataForm({
+      date: new Date().toISOString().split('T')[0],
+      actualOrders: '',
+      actualRevenue: '',
+      notes: ''
+    });
+
+    // Trigger analytics refresh
+    setAnalyticsRefresh(prev => prev + 1);
+    alert('Actual data saved successfully!');
+  };
+
+  const handleExportAllData = () => {
+    const jsonData = storageService.exportAllData();
+    const blob = new Blob([jsonData], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pizzai_data_export_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportData = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = (e: any) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event: any) => {
+          try {
+            const success = storageService.importData(event.target.result);
+            if (success) {
+              setAnalyticsRefresh(prev => prev + 1);
+              alert('Data imported successfully!');
+            } else {
+              alert('Failed to import data');
+            }
+          } catch (error) {
+            alert('Error importing data: Invalid file format');
+          }
+        };
+        reader.readAsText(file);
+      }
+    };
+    input.click();
+  };
+
+  const handleClearOldData = () => {
+    if (confirm('Clear all data older than 90 days?')) {
+      const success = storageService.clearOldData(90);
+      if (success) {
+        setAnalyticsRefresh(prev => prev + 1);
+        alert('Old data cleared successfully!');
+      }
+    }
   };
 
   const WeatherIcon = ({ condition }) => {
@@ -1167,6 +1251,378 @@ Use minimal or no emojis. Professional tone. Respond with ONLY the JSON object.`
                     Configure settings and click "Generate Promo" to create a campaign
                   </div>
                 )}
+              </div>
+            )}
+
+            {activeTab === 'history' && (
+              <div className="space-y-6 tab-content">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold text-gray-900">History & Analytics</h2>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleImportData}
+                      className="btn-secondary"
+                    >
+                      Import Data
+                    </button>
+                    <button
+                      onClick={handleExportAllData}
+                      className="btn-primary"
+                    >
+                      Export All Data
+                    </button>
+                  </div>
+                </div>
+
+                {/* Summary Stats */}
+                {(() => {
+                  const summary = analyticsService.getRecentSummary();
+                  const accuracyStats = analyticsService.getAccuracyStats();
+                  const storageStats = storageService.getStorageStats();
+
+                  return (
+                    <div className="grid grid-cols-4 gap-4">
+                      <div className="stat-card bg-blue-50 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
+                        <div className="flex items-center gap-2 text-blue-700 mb-2">
+                          <Calendar className="w-5 h-5" />
+                          <span className="font-semibold">Total Records</span>
+                        </div>
+                        <p className="text-2xl font-bold text-blue-900">{summary.totalRecords}</p>
+                        <p className="text-xs text-blue-700 mt-1">{summary.recentDays} days tracked</p>
+                      </div>
+                      <div className="stat-card bg-green-50 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
+                        <div className="flex items-center gap-2 text-green-700 mb-2">
+                          <CheckCircle className="w-5 h-5" />
+                          <span className="font-semibold">Avg Accuracy</span>
+                        </div>
+                        <p className="text-2xl font-bold text-green-900">{accuracyStats.averageAccuracy.toFixed(1)}%</p>
+                        <p className="text-xs text-green-700 mt-1">{accuracyStats.totalForecasts} forecasts</p>
+                      </div>
+                      <div className="stat-card bg-purple-50 animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
+                        <div className="flex items-center gap-2 text-purple-700 mb-2">
+                          <TrendingUp className="w-5 h-5" />
+                          <span className="font-semibold">Order Growth</span>
+                        </div>
+                        <p className="text-2xl font-bold text-purple-900">
+                          {summary.weekOverWeekOrderGrowth > 0 ? '+' : ''}{summary.weekOverWeekOrderGrowth.toFixed(1)}%
+                        </p>
+                        <p className="text-xs text-purple-700 mt-1">Week over week</p>
+                      </div>
+                      <div className="stat-card bg-amber-50 animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
+                        <div className="flex items-center gap-2 text-amber-700 mb-2">
+                          <DollarSign className="w-5 h-5" />
+                          <span className="font-semibold">Revenue Growth</span>
+                        </div>
+                        <p className="text-2xl font-bold text-amber-900">
+                          {summary.weekOverWeekRevenueGrowth > 0 ? '+' : ''}{summary.weekOverWeekRevenueGrowth.toFixed(1)}%
+                        </p>
+                        <p className="text-xs text-amber-700 mt-1">Week over week</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Actual Data Entry Form */}
+                <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-6 border border-blue-200">
+                  <h3 className="text-lg font-semibold mb-4 text-gray-900">Track Actual Performance</h3>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
+                      <input
+                        type="date"
+                        value={actualDataForm.date}
+                        onChange={(e) => setActualDataForm({ ...actualDataForm, date: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Actual Orders</label>
+                      <input
+                        type="number"
+                        value={actualDataForm.actualOrders}
+                        onChange={(e) => setActualDataForm({ ...actualDataForm, actualOrders: e.target.value })}
+                        placeholder="e.g., 125"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Actual Revenue ($)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={actualDataForm.actualRevenue}
+                        onChange={(e) => setActualDataForm({ ...actualDataForm, actualRevenue: e.target.value })}
+                        placeholder="e.g., 1750.00"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        onClick={handleSubmitActualData}
+                        className="w-full btn-primary"
+                      >
+                        Save Data
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
+                    <input
+                      type="text"
+                      value={actualDataForm.notes}
+                      onChange={(e) => setActualDataForm({ ...actualDataForm, notes: e.target.value })}
+                      placeholder="e.g., Busy Friday night, rain affected delivery"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+
+                {/* Forecast Accuracy */}
+                {(() => {
+                  const accuracyData = analyticsService.calculateForecastAccuracy();
+                  const accuracyStats = analyticsService.getAccuracyStats();
+
+                  if (accuracyData.length === 0) {
+                    return (
+                      <div className="bg-gray-50 rounded-lg p-12 text-center border border-gray-200">
+                        <AlertCircle className="w-12 h-12 mx-auto text-gray-400 mb-3" />
+                        <p className="text-gray-600 font-medium">No forecast accuracy data available yet</p>
+                        <p className="text-sm text-gray-500 mt-2">Generate forecasts and track actual data to see accuracy metrics</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <>
+                      <div className="bg-white border border-gray-200 rounded-lg p-6">
+                        <h3 className="text-lg font-semibold mb-4">Forecast Accuracy Overview</h3>
+                        <div className="grid grid-cols-3 gap-4 mb-6">
+                          <div className="bg-green-50 rounded-lg p-4">
+                            <div className="text-sm text-green-700 mb-1">Accurate Forecasts</div>
+                            <div className="text-2xl font-bold text-green-900">
+                              {accuracyStats.accurateForecasts} / {accuracyStats.totalForecasts}
+                            </div>
+                            <div className="text-xs text-green-700 mt-1">Within 10% variance</div>
+                          </div>
+                          <div className="bg-blue-50 rounded-lg p-4">
+                            <div className="text-sm text-blue-700 mb-1">Over-Forecasted</div>
+                            <div className="text-2xl font-bold text-blue-900">{accuracyStats.overForecasts}</div>
+                            <div className="text-xs text-blue-700 mt-1">Predicted higher than actual</div>
+                          </div>
+                          <div className="bg-amber-50 rounded-lg p-4">
+                            <div className="text-sm text-amber-700 mb-1">Under-Forecasted</div>
+                            <div className="text-2xl font-bold text-amber-900">{accuracyStats.underForecasts}</div>
+                            <div className="text-xs text-amber-700 mt-1">Predicted lower than actual</div>
+                          </div>
+                        </div>
+                        <ResponsiveContainer width="100%" height={300}>
+                          <LineChart data={accuracyData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+                            <YAxis yAxisId="left" label={{ value: 'Orders', angle: -90, position: 'insideLeft' }} />
+                            <YAxis yAxisId="right" orientation="right" label={{ value: 'Accuracy %', angle: 90, position: 'insideRight' }} />
+                            <Tooltip
+                              labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                            />
+                            <Legend />
+                            <Line yAxisId="left" type="monotone" dataKey="predictedOrders" stroke="#3b82f6" strokeWidth={2} name="Predicted Orders" />
+                            <Line yAxisId="left" type="monotone" dataKey="actualOrders" stroke="#10b981" strokeWidth={2} name="Actual Orders" />
+                            <Line yAxisId="right" type="monotone" dataKey="accuracy" stroke="#f59e0b" strokeWidth={2} name="Accuracy %" />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* Best and Worst Days */}
+                      {accuracyStats.bestDay && accuracyStats.worstDay && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                              <CheckCircle className="w-5 h-5 text-green-600" />
+                              <h4 className="font-semibold text-green-900">Best Forecast</h4>
+                            </div>
+                            <div className="text-sm text-green-800">
+                              <p className="font-medium">{new Date(accuracyStats.bestDay.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
+                              <p className="mt-2">Accuracy: <span className="font-bold">{accuracyStats.bestDay.accuracy.toFixed(1)}%</span></p>
+                              <p>Predicted: {accuracyStats.bestDay.predictedOrders} orders</p>
+                              <p>Actual: {accuracyStats.bestDay.actualOrders} orders</p>
+                            </div>
+                          </div>
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                              <AlertCircle className="w-5 h-5 text-red-600" />
+                              <h4 className="font-semibold text-red-900">Needs Improvement</h4>
+                            </div>
+                            <div className="text-sm text-red-800">
+                              <p className="font-medium">{new Date(accuracyStats.worstDay.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
+                              <p className="mt-2">Accuracy: <span className="font-bold">{accuracyStats.worstDay.accuracy.toFixed(1)}%</span></p>
+                              <p>Predicted: {accuracyStats.worstDay.predictedOrders} orders</p>
+                              <p>Actual: {accuracyStats.worstDay.actualOrders} orders</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                {/* Order & Revenue Trends */}
+                {(() => {
+                  const orderTrend = analyticsService.getOrderTrend();
+                  const revenueTrend = analyticsService.getRevenueTrend();
+
+                  if (orderTrend.length > 0) {
+                    return (
+                      <div className="bg-white border border-gray-200 rounded-lg p-6">
+                        <h3 className="text-lg font-semibold mb-4">Performance Trends</h3>
+                        <div className="grid grid-cols-2 gap-6">
+                          <div>
+                            <h4 className="text-sm font-medium text-gray-700 mb-3">Order Volume</h4>
+                            <ResponsiveContainer width="100%" height={200}>
+                              <LineChart data={orderTrend}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="date" tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+                                <YAxis />
+                                <Tooltip labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} />
+                                <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} name="Orders" />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-medium text-gray-700 mb-3">Revenue</h4>
+                            <ResponsiveContainer width="100%" height={200}>
+                              <LineChart data={revenueTrend}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="date" tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+                                <YAxis />
+                                <Tooltip labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} />
+                                <Line type="monotone" dataKey="value" stroke="#10b981" strokeWidth={2} name="Revenue" />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Schedule Performance */}
+                {(() => {
+                  const schedulePerformance = analyticsService.getSchedulePerformance();
+
+                  if (schedulePerformance.length > 0) {
+                    return (
+                      <div className="bg-white border border-gray-200 rounded-lg p-6">
+                        <h3 className="text-lg font-semibold mb-4">Schedule Performance</h3>
+                        <div className="space-y-3">
+                          {schedulePerformance.slice(0, 5).map((perf) => (
+                            <div key={perf.scheduleId} className="bg-gray-50 rounded-lg p-4">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="font-medium text-gray-900">
+                                  Week of {new Date(perf.weekStartDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                </span>
+                                {perf.variance !== undefined && (
+                                  <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                                    perf.variance <= 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                  }`}>
+                                    {perf.variance > 0 ? '+' : ''}${perf.variance.toFixed(0)} ({perf.variancePercent?.toFixed(1)}%)
+                                  </span>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-4 gap-4 text-sm">
+                                <div>
+                                  <span className="text-gray-600">Planned Hours:</span>
+                                  <div className="font-semibold text-gray-900">{perf.plannedHours.toFixed(1)}h</div>
+                                </div>
+                                {perf.actualHours !== undefined && (
+                                  <div>
+                                    <span className="text-gray-600">Actual Hours:</span>
+                                    <div className="font-semibold text-gray-900">{perf.actualHours.toFixed(1)}h</div>
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-gray-600">Planned Cost:</span>
+                                  <div className="font-semibold text-gray-900">${perf.plannedCost.toFixed(0)}</div>
+                                </div>
+                                {perf.actualCost !== undefined && (
+                                  <div>
+                                    <span className="text-gray-600">Actual Cost:</span>
+                                    <div className="font-semibold text-gray-900">${perf.actualCost.toFixed(0)}</div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Storage Management */}
+                {(() => {
+                  const storageStats = storageService.getStorageStats();
+
+                  return (
+                    <div className="bg-gradient-to-r from-gray-50 to-blue-50 border border-gray-200 rounded-lg p-6">
+                      <h3 className="text-lg font-semibold mb-4">Storage Management</h3>
+                      <div className="grid grid-cols-2 gap-6">
+                        <div>
+                          <div className="mb-3">
+                            <div className="flex justify-between text-sm mb-2">
+                              <span className="text-gray-700">Storage Used</span>
+                              <span className="font-semibold text-gray-900">
+                                {(storageStats.used / 1024).toFixed(2)} KB / {(storageStats.available / 1024 / 1024).toFixed(1)} MB
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-3">
+                              <div
+                                className={`h-3 rounded-full transition-all duration-500 ${
+                                  storageStats.percentage < 50 ? 'bg-green-600' :
+                                  storageStats.percentage < 80 ? 'bg-yellow-600' :
+                                  'bg-red-600'
+                                }`}
+                                style={{ width: `${storageStats.percentage}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-sm mt-4">
+                            {Object.entries(storageStats.recordCounts).map(([key, count]) => (
+                              <div key={key} className="flex justify-between py-2 px-3 bg-white rounded border border-gray-200">
+                                <span className="text-gray-600 capitalize">{key.replace('pizzai_', '')}</span>
+                                <span className="font-semibold text-gray-900">{count}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex flex-col justify-center gap-3">
+                          <button
+                            onClick={handleClearOldData}
+                            className="px-4 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+                          >
+                            Clear Data Older Than 90 Days
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm('This will delete ALL stored data. Are you sure?')) {
+                                storageService.clearAllData();
+                                setAnalyticsRefresh(prev => prev + 1);
+                                alert('All data cleared successfully!');
+                              }
+                            }}
+                            className="px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+                          >
+                            Clear All Data
+                          </button>
+                          <p className="text-xs text-gray-600 mt-2">
+                            Data is automatically cleaned up after 90 days. Export your data regularly for long-term storage.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
