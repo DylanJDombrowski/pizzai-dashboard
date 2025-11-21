@@ -18,6 +18,8 @@ interface DailyForecast {
   weather_boost: number; // percentage, can be negative
   prep_items: string[];
   staffing_note: string;
+  confidence: 'low' | 'medium' | 'high';
+  basedOnDays: number; // How many historical days this is based on
 }
 
 const MOCK_DATA = {
@@ -66,9 +68,18 @@ const PizzAIDashboard = () => {
   const [closeForm, setCloseForm] = useState({
     orders: '',
     revenue: '',
+    laborHours: '',
     notes: ''
   });
   const [showCloseSuccess, setShowCloseSuccess] = useState(false);
+  const [lastCloseResult, setLastCloseResult] = useState<{
+    laborPercent: number;
+    vsTarget: string;
+  } | null>(null);
+
+  // Default hourly rate for labor cost calculation
+  const AVG_HOURLY_RATE = 15; // $15/hour average
+  const TARGET_LABOR_PERCENT = 28; // Target 28% labor cost
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 60000);
@@ -112,8 +123,29 @@ const PizzAIDashboard = () => {
       const isWeekend = dayOfWeek === 5 || dayOfWeek === 6; // Fri or Sat
       const isSunday = dayOfWeek === 0;
 
-      // Base orders by day type
-      let baseOrders = isWeekend ? 165 : isSunday ? 130 : 90;
+      // Check for historical data for this day of week
+      const historicalAverages = storageService.getAveragesByDayOfWeek();
+      const dayData = historicalAverages[dayOfWeek];
+
+      // Use historical data if available, otherwise use defaults
+      let baseOrders: number;
+      let avgTicket: number;
+      let confidence: 'low' | 'medium' | 'high';
+      let basedOnDays: number;
+
+      if (dayData && dayData.count >= 2) {
+        // We have enough data to use historical averages
+        baseOrders = dayData.avgOrders;
+        avgTicket = dayData.avgRevenue / dayData.avgOrders;
+        basedOnDays = dayData.count;
+        confidence = dayData.count >= 4 ? 'high' : 'medium';
+      } else {
+        // Fall back to defaults
+        baseOrders = isWeekend ? 165 : isSunday ? 130 : 90;
+        avgTicket = 14;
+        basedOnDays = dayData?.count || 0;
+        confidence = 'low';
+      }
 
       // Weather adjustment
       const avgPrecip = hourlyWeather.reduce((sum, h) => sum + h.precip_chance, 0) / hourlyWeather.length;
@@ -132,11 +164,10 @@ const PizzAIDashboard = () => {
       }
 
       const expectedOrders = Math.round(baseOrders * (1 + weatherBoost / 100) * eventMultiplier);
-      const avgTicket = 14;
 
       const forecastData: DailyForecast = {
         expected_orders: expectedOrders,
-        revenue_estimate: expectedOrders * avgTicket,
+        revenue_estimate: Math.round(expectedOrders * avgTicket),
         peak_hours: isWeekend ? "6:00 PM - 9:00 PM" : "5:30 PM - 8:00 PM",
         weather_impact: isRainy
           ? "Rain expected - delivery orders typically up 15%"
@@ -150,7 +181,9 @@ const PizzAIDashboard = () => {
         ],
         staffing_note: isWeekend
           ? "Weekend shift - ensure full coverage 5-9 PM"
-          : "Weekday - standard evening crew"
+          : "Weekday - standard evening crew",
+        confidence,
+        basedOnDays
       };
 
       setForecast(forecastData);
@@ -177,16 +210,40 @@ const PizzAIDashboard = () => {
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const orders = parseInt(closeForm.orders);
+    const revenue = parseFloat(closeForm.revenue);
+    const laborHours = closeForm.laborHours ? parseFloat(closeForm.laborHours) : undefined;
+    const laborCost = laborHours ? laborHours * AVG_HOURLY_RATE : undefined;
+
     storageService.saveActualData(
       today,
-      parseInt(closeForm.orders),
-      parseFloat(closeForm.revenue),
+      orders,
+      revenue,
+      laborHours,
+      laborCost,
       closeForm.notes
     );
 
-    setCloseForm({ orders: '', revenue: '', notes: '' });
+    // Calculate labor % for feedback
+    if (laborHours && revenue > 0) {
+      const laborPercent = (laborCost! / revenue) * 100;
+      const diff = laborPercent - TARGET_LABOR_PERCENT;
+      const vsTarget = diff > 0
+        ? `${diff.toFixed(1)}% over target`
+        : diff < 0
+        ? `${Math.abs(diff).toFixed(1)}% under target`
+        : 'Right on target';
+      setLastCloseResult({ laborPercent, vsTarget });
+    } else {
+      setLastCloseResult(null);
+    }
+
+    setCloseForm({ orders: '', revenue: '', laborHours: '', notes: '' });
     setShowCloseSuccess(true);
-    setTimeout(() => setShowCloseSuccess(false), 3000);
+    setTimeout(() => {
+      setShowCloseSuccess(false);
+      setLastCloseResult(null);
+    }, 5000);
   };
 
   const getInventoryStatus = (item: typeof MOCK_DATA.inventory[0]) => {
@@ -224,6 +281,14 @@ const PizzAIDashboard = () => {
     const prevWeekOrders = prevWeek.reduce((sum, d) => sum + d.actualOrders, 0);
     const prevWeekRevenue = prevWeek.reduce((sum, d) => sum + d.actualRevenue, 0);
 
+    // Calculate labor stats
+    const daysWithLabor = lastWeek.filter(d => d.laborHours && d.laborCost);
+    const totalLaborCost = daysWithLabor.reduce((sum, d) => sum + (d.laborCost || 0), 0);
+    const totalRevenueWithLabor = daysWithLabor.reduce((sum, d) => sum + d.actualRevenue, 0);
+    const avgLaborPercent = totalRevenueWithLabor > 0
+      ? (totalLaborCost / totalRevenueWithLabor) * 100
+      : null;
+
     const orderChange = prevWeekOrders > 0
       ? ((lastWeekOrders - prevWeekOrders) / prevWeekOrders) * 100
       : 0;
@@ -239,10 +304,15 @@ const PizzAIDashboard = () => {
       },
       orderChange,
       revenueChange,
+      avgLaborPercent,
+      daysWithLaborTracked: daysWithLabor.length,
       recentDays: lastWeek.map(d => ({
         date: d.date,
         orders: d.actualOrders,
-        revenue: d.actualRevenue
+        revenue: d.actualRevenue,
+        laborPercent: d.laborCost && d.actualRevenue > 0
+          ? (d.laborCost / d.actualRevenue) * 100
+          : null
       }))
     };
   };
@@ -322,9 +392,25 @@ const PizzAIDashboard = () => {
                     <div className="bg-blue-50 rounded-lg p-4 text-center">
                       <div className="text-4xl font-bold text-blue-900">{forecast.expected_orders}</div>
                       <div className="text-sm text-blue-700 mt-1">Expected Orders</div>
-                      {forecast.weather_boost !== 0 && (
-                        <div className="text-xs text-blue-600 mt-1">
-                          {forecast.weather_boost > 0 ? '+' : ''}{forecast.weather_boost}% weather
+                      <div className="flex items-center justify-center gap-2 mt-2">
+                        {forecast.weather_boost !== 0 && (
+                          <span className="text-xs text-blue-600">
+                            {forecast.weather_boost > 0 ? '+' : ''}{forecast.weather_boost}% weather
+                          </span>
+                        )}
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          forecast.confidence === 'high' ? 'bg-green-100 text-green-700' :
+                          forecast.confidence === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {forecast.confidence === 'high' ? 'High confidence' :
+                           forecast.confidence === 'medium' ? 'Learning...' :
+                           'Estimate'}
+                        </span>
+                      </div>
+                      {forecast.basedOnDays > 0 && (
+                        <div className="text-xs text-blue-500 mt-1">
+                          Based on {forecast.basedOnDays} {forecast.basedOnDays === 1 ? 'day' : 'days'} of data
                         </div>
                       )}
                     </div>
@@ -534,9 +620,24 @@ const PizzAIDashboard = () => {
               <p className="text-gray-500 text-sm mb-6">Track your actual numbers to improve future predictions</p>
 
               {showCloseSuccess && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex items-center gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <span className="text-green-800 font-medium">Day closed! Numbers saved.</span>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <span className="text-green-800 font-medium">Day closed! Numbers saved.</span>
+                  </div>
+                  {lastCloseResult && (
+                    <div className="mt-3 pt-3 border-t border-green-200">
+                      <div className="flex items-center justify-between">
+                        <span className="text-green-700">Today's Labor Cost:</span>
+                        <span className={`font-bold ${
+                          lastCloseResult.laborPercent <= TARGET_LABOR_PERCENT ? 'text-green-700' : 'text-amber-600'
+                        }`}>
+                          {lastCloseResult.laborPercent.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="text-sm text-green-600 mt-1">{lastCloseResult.vsTarget}</div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -579,6 +680,23 @@ const PizzAIDashboard = () => {
                     placeholder="Total sales"
                     className="w-full px-4 py-3 text-lg border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                   />
+                </div>
+                <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
+                  <label className="block text-sm font-medium text-amber-800 mb-2">
+                    Total Labor Hours (optional)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={closeForm.laborHours}
+                    onChange={(e) => setCloseForm({ ...closeForm, laborHours: e.target.value })}
+                    placeholder="e.g., 32 (all staff combined)"
+                    className="w-full px-4 py-3 text-lg border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white"
+                  />
+                  <p className="text-xs text-amber-600 mt-2">
+                    Add up all staff hours. We'll calculate labor % at ${AVG_HOURLY_RATE}/hr avg.
+                    Target: {TARGET_LABOR_PERCENT}%
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Notes (optional)</label>
@@ -654,6 +772,38 @@ const PizzAIDashboard = () => {
                     </div>
                   </div>
 
+                  {/* Labor Cost Card */}
+                  {perf.avgLaborPercent !== null && (
+                    <div className={`rounded-xl shadow-md p-6 ${
+                      perf.avgLaborPercent <= TARGET_LABOR_PERCENT ? 'bg-green-50' : 'bg-amber-50'
+                    }`}>
+                      <h2 className="text-lg font-semibold text-gray-700 mb-4">Labor Cost</h2>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className={`text-4xl font-bold ${
+                            perf.avgLaborPercent <= TARGET_LABOR_PERCENT ? 'text-green-700' : 'text-amber-700'
+                          }`}>
+                            {perf.avgLaborPercent.toFixed(1)}%
+                          </div>
+                          <div className="text-sm text-gray-600 mt-1">
+                            Average labor cost ({perf.daysWithLaborTracked} days tracked)
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className={`text-lg font-semibold ${
+                            perf.avgLaborPercent <= TARGET_LABOR_PERCENT ? 'text-green-600' : 'text-amber-600'
+                          }`}>
+                            {perf.avgLaborPercent <= TARGET_LABOR_PERCENT
+                              ? `${(TARGET_LABOR_PERCENT - perf.avgLaborPercent).toFixed(1)}% under target`
+                              : `${(perf.avgLaborPercent - TARGET_LABOR_PERCENT).toFixed(1)}% over target`
+                            }
+                          </div>
+                          <div className="text-sm text-gray-500">Target: {TARGET_LABOR_PERCENT}%</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Recent Days */}
                   <div className="bg-white rounded-xl shadow-md p-6">
                     <h3 className="text-lg font-semibold text-gray-700 mb-4">Recent Days</h3>
@@ -663,13 +813,26 @@ const PizzAIDashboard = () => {
                           <span className="text-gray-700">
                             {new Date(day.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                           </span>
-                          <div className="flex gap-6 text-right">
+                          <div className="flex gap-4 text-right items-center">
                             <div>
                               <span className="font-semibold text-gray-900">{day.orders}</span>
                               <span className="text-gray-500 text-sm ml-1">orders</span>
                             </div>
-                            <div>
+                            <div className="w-20">
                               <span className="font-semibold text-gray-900">${day.revenue.toLocaleString()}</span>
+                            </div>
+                            <div className="w-16 text-right">
+                              {day.laborPercent !== null ? (
+                                <span className={`text-sm font-semibold px-2 py-1 rounded ${
+                                  day.laborPercent <= TARGET_LABOR_PERCENT
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {day.laborPercent.toFixed(0)}%
+                                </span>
+                              ) : (
+                                <span className="text-xs text-gray-400">--</span>
+                              )}
                             </div>
                           </div>
                         </div>

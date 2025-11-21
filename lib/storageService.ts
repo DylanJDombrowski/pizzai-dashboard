@@ -72,6 +72,8 @@ export interface ActualDataRecord {
   date: string;
   actualOrders: number;
   actualRevenue: number;
+  laborHours?: number;
+  laborCost?: number;
   notes?: string;
   createdAt: string;
 }
@@ -295,7 +297,14 @@ class StorageService {
 
   // ===== ACTUAL DATA OPERATIONS =====
 
-  saveActualData(date: string, actualOrders: number, actualRevenue: number, notes?: string): ActualDataRecord {
+  saveActualData(
+    date: string,
+    actualOrders: number,
+    actualRevenue: number,
+    laborHours?: number,
+    laborCost?: number,
+    notes?: string
+  ): ActualDataRecord {
     const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
 
     const record: ActualDataRecord = {
@@ -303,6 +312,8 @@ class StorageService {
       date,
       actualOrders,
       actualRevenue,
+      laborHours,
+      laborCost,
       notes,
       createdAt: new Date().toISOString(),
     };
@@ -334,6 +345,55 @@ class StorageService {
   getActualDataByDate(date: string): ActualDataRecord | null {
     const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
     return records.find(r => r.date === date) || null;
+  }
+
+  /**
+   * Get average orders by day of week from historical data
+   * Returns null for days with no data
+   */
+  getAveragesByDayOfWeek(): { [dayOfWeek: number]: { avgOrders: number; avgRevenue: number; count: number } | null } {
+    const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
+
+    // Group by day of week (0 = Sunday, 6 = Saturday)
+    const byDay: { [key: number]: { orders: number[]; revenue: number[] } } = {
+      0: { orders: [], revenue: [] },
+      1: { orders: [], revenue: [] },
+      2: { orders: [], revenue: [] },
+      3: { orders: [], revenue: [] },
+      4: { orders: [], revenue: [] },
+      5: { orders: [], revenue: [] },
+      6: { orders: [], revenue: [] },
+    };
+
+    records.forEach(record => {
+      const dayOfWeek = new Date(record.date).getDay();
+      byDay[dayOfWeek].orders.push(record.actualOrders);
+      byDay[dayOfWeek].revenue.push(record.actualRevenue);
+    });
+
+    const result: { [dayOfWeek: number]: { avgOrders: number; avgRevenue: number; count: number } | null } = {};
+
+    for (let day = 0; day < 7; day++) {
+      const data = byDay[day];
+      if (data.orders.length === 0) {
+        result[day] = null;
+      } else {
+        result[day] = {
+          avgOrders: Math.round(data.orders.reduce((a, b) => a + b, 0) / data.orders.length),
+          avgRevenue: Math.round(data.revenue.reduce((a, b) => a + b, 0) / data.revenue.length),
+          count: data.orders.length,
+        };
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Get total tracked days count
+   */
+  getTrackedDaysCount(): number {
+    return this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS).length;
   }
 
   // ===== EMPLOYEE OPERATIONS =====
