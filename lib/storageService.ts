@@ -532,6 +532,90 @@ class StorageService {
     return [headers.join(','), ...rows].join('\n');
   }
 
+  // ===== BEST DAY INSIGHTS =====
+
+  getBestDaysByDayOfWeek(): { [dayOfWeek: number]: { date: string; orders: number; revenue: number } | null } {
+    const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    const bestByDay: { [key: number]: { date: string; orders: number; revenue: number } | null } = {};
+
+    for (let day = 0; day < 7; day++) {
+      const dayRecords = records.filter(r => new Date(r.date).getDay() === day);
+      if (dayRecords.length === 0) {
+        bestByDay[day] = null;
+      } else {
+        const best = dayRecords.reduce((max, r) => r.actualOrders > max.actualOrders ? r : max);
+        bestByDay[day] = {
+          date: best.date,
+          orders: best.actualOrders,
+          revenue: best.actualRevenue
+        };
+      }
+    }
+
+    return bestByDay;
+  }
+
+  getOverallBestDay(): { date: string; orders: number; revenue: number; dayName: string } | null {
+    const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
+    if (records.length === 0) return null;
+
+    const best = records.reduce((max, r) => r.actualOrders > max.actualOrders ? r : max);
+    const dayName = new Date(best.date).toLocaleDateString('en-US', { weekday: 'long' });
+
+    return {
+      date: best.date,
+      orders: best.actualOrders,
+      revenue: best.actualRevenue,
+      dayName
+    };
+  }
+
+  // ===== WEEK COMPARISON DATA =====
+
+  getWeekComparisonData(): { thisWeek: { day: string; orders: number; revenue: number }[]; lastWeek: { day: string; orders: number; revenue: number }[] } {
+    const records = this.getRecords<ActualDataRecord>(STORAGE_KEYS.ACTUALS);
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    // Get start of current week (Monday)
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const thisMonday = new Date(today);
+    thisMonday.setDate(today.getDate() + diff);
+    const thisWeekStart = thisMonday.toISOString().split('T')[0];
+
+    // Get start of last week
+    const lastMonday = new Date(thisMonday);
+    lastMonday.setDate(thisMonday.getDate() - 7);
+    const lastWeekStart = lastMonday.toISOString().split('T')[0];
+    const lastWeekEnd = thisWeekStart;
+
+    const thisWeekRecords = records.filter(r => r.date >= thisWeekStart);
+    const lastWeekRecords = records.filter(r => r.date >= lastWeekStart && r.date < lastWeekEnd);
+
+    // Build arrays for each day of week
+    const thisWeek = dayNames.map((day, idx) => {
+      const adjustedIdx = idx === 0 ? 6 : idx - 1; // Adjust for Monday start
+      const record = thisWeekRecords.find(r => {
+        const d = new Date(r.date).getDay();
+        return d === (adjustedIdx + 1) % 7 || (adjustedIdx === 6 && d === 0);
+      });
+      return { day, orders: record?.actualOrders || 0, revenue: record?.actualRevenue || 0 };
+    });
+
+    const lastWeek = dayNames.map((day, idx) => {
+      const record = lastWeekRecords.find(r => {
+        const d = new Date(r.date).getDay();
+        return d === idx;
+      });
+      return { day, orders: record?.actualOrders || 0, revenue: record?.actualRevenue || 0 };
+    });
+
+    return { thisWeek, lastWeek };
+  }
+
   // ===== CUSTOM PREP TASKS =====
 
   getCustomPrepTasks(): CustomPrepTask[] {

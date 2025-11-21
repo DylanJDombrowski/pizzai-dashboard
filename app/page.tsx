@@ -1,8 +1,8 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Plus, X, Pencil, Trash2, Calendar, Download, Target } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
+import { Cloud, CloudRain, Sun, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, DollarSign, Pizza, Package, ClipboardCheck, BarChart3, ChevronRight, Plus, X, Pencil, Trash2, Calendar, Download, Target, Calculator, ShoppingCart, Award } from 'lucide-react';
 import { getHourlyWeather, getWeeklyWeather, type HourlyWeather, type DailyWeather } from '@/lib/weatherService';
 import { getHighImpactEventsInNext } from '@/lib/specialEvents';
 import type { SpecialEvent } from '@/lib/schedulingTypes';
@@ -84,6 +84,9 @@ const PizzAIDashboard = () => {
   const [weeklyGoal, setWeeklyGoal] = useState<number | null>(null);
   const [showGoalInput, setShowGoalInput] = useState(false);
   const [goalInput, setGoalInput] = useState('');
+
+  // Food cost calculator state
+  const [foodCostCalc, setFoodCostCalc] = useState({ revenue: '', foodCost: '' });
 
   // Default hourly rate for labor cost calculation
   const AVG_HOURLY_RATE = 15; // $15/hour average
@@ -984,6 +987,52 @@ const PizzAIDashboard = () => {
                 })}
               </div>
             </div>
+
+            {/* Order List Generator */}
+            {customInventory.filter(item => item.on_hand < item.par_level).length > 0 && (
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-semibold text-gray-700 flex items-center gap-2">
+                    <ShoppingCart className="w-5 h-5 text-red-500" />
+                    Order List
+                  </h2>
+                  <button
+                    onClick={() => {
+                      const items = customInventory
+                        .filter(item => item.on_hand < item.par_level)
+                        .map(item => `${item.ingredient}: ${Math.ceil(item.par_level - item.on_hand)} ${item.unit}`)
+                        .join('\n');
+                      navigator.clipboard.writeText(items);
+                      alert('Order list copied to clipboard!');
+                    }}
+                    className="text-sm text-red-600 hover:text-red-700 font-medium"
+                  >
+                    Copy List
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {customInventory
+                    .filter(item => item.on_hand < item.par_level)
+                    .sort((a, b) => (a.on_hand / a.par_level) - (b.on_hand / b.par_level))
+                    .map(item => {
+                      const needed = Math.ceil(item.par_level - item.on_hand);
+                      const urgency = item.on_hand / item.par_level;
+                      return (
+                        <div key={item.id} className={`flex justify-between items-center p-3 rounded-lg ${
+                          urgency < 0.3 ? 'bg-red-50' : urgency < 0.5 ? 'bg-orange-50' : 'bg-yellow-50'
+                        }`}>
+                          <span className="font-medium text-gray-900">{item.ingredient}</span>
+                          <span className={`font-semibold ${
+                            urgency < 0.3 ? 'text-red-700' : urgency < 0.5 ? 'text-orange-700' : 'text-yellow-700'
+                          }`}>
+                            {needed} {item.unit}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1314,6 +1363,123 @@ const PizzAIDashboard = () => {
                       </div>
                     </div>
                   )}
+
+                  {/* Best Day Insights */}
+                  {(() => {
+                    const bestDay = storageService.getOverallBestDay();
+                    if (!bestDay) return null;
+                    return (
+                      <div className="bg-gradient-to-r from-yellow-50 to-amber-50 rounded-xl shadow-md p-6">
+                        <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                          <Award className="w-5 h-5 text-amber-500" />
+                          Best Day Record
+                        </h2>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-3xl font-bold text-amber-700">{bestDay.orders} orders</div>
+                            <div className="text-sm text-gray-600 mt-1">
+                              ${bestDay.revenue.toLocaleString()} revenue
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-lg font-semibold text-amber-600">{bestDay.dayName}</div>
+                            <div className="text-sm text-gray-500">
+                              {new Date(bestDay.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Food Cost Calculator */}
+                  <div className="bg-white rounded-xl shadow-md p-6">
+                    <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                      <Calculator className="w-5 h-5 text-blue-500" />
+                      Food Cost Calculator
+                    </h2>
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-600 mb-1">Revenue ($)</label>
+                        <input
+                          type="number"
+                          value={foodCostCalc.revenue}
+                          onChange={(e) => setFoodCostCalc({ ...foodCostCalc, revenue: e.target.value })}
+                          placeholder="e.g., 2500"
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-600 mb-1">Food Cost ($)</label>
+                        <input
+                          type="number"
+                          value={foodCostCalc.foodCost}
+                          onChange={(e) => setFoodCostCalc({ ...foodCostCalc, foodCost: e.target.value })}
+                          placeholder="e.g., 750"
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                    {foodCostCalc.revenue && foodCostCalc.foodCost && (
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <div className="grid grid-cols-3 gap-4 text-center">
+                          <div>
+                            <div className={`text-2xl font-bold ${
+                              (parseFloat(foodCostCalc.foodCost) / parseFloat(foodCostCalc.revenue) * 100) <= 30 ? 'text-green-600' : 'text-amber-600'
+                            }`}>
+                              {(parseFloat(foodCostCalc.foodCost) / parseFloat(foodCostCalc.revenue) * 100).toFixed(1)}%
+                            </div>
+                            <div className="text-xs text-gray-500">Food Cost %</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-blue-600">
+                              {(100 - parseFloat(foodCostCalc.foodCost) / parseFloat(foodCostCalc.revenue) * 100).toFixed(1)}%
+                            </div>
+                            <div className="text-xs text-gray-500">Gross Margin</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-gray-700">
+                              ${(parseFloat(foodCostCalc.revenue) - parseFloat(foodCostCalc.foodCost)).toLocaleString()}
+                            </div>
+                            <div className="text-xs text-gray-500">Gross Profit</div>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-3 text-center">
+                          Industry target: 28-32% food cost
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Week-over-Week Comparison Chart */}
+                  {(() => {
+                    const comparison = storageService.getWeekComparisonData();
+                    const hasData = comparison.thisWeek.some(d => d.orders > 0) || comparison.lastWeek.some(d => d.orders > 0);
+                    if (!hasData) return null;
+
+                    const chartData = comparison.thisWeek.map((d, i) => ({
+                      day: d.day,
+                      thisWeek: d.orders,
+                      lastWeek: comparison.lastWeek[i]?.orders || 0
+                    }));
+
+                    return (
+                      <div className="bg-white rounded-xl shadow-md p-6">
+                        <h3 className="text-lg font-semibold text-gray-700 mb-4">This Week vs Last Week</h3>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <LineChart data={chartData}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="day" />
+                            <YAxis />
+                            <Tooltip />
+                            <Legend />
+                            <Line type="monotone" dataKey="thisWeek" stroke="#dc2626" strokeWidth={2} name="This Week" dot={{ fill: '#dc2626' }} />
+                            <Line type="monotone" dataKey="lastWeek" stroke="#9ca3af" strokeWidth={2} name="Last Week" dot={{ fill: '#9ca3af' }} strokeDasharray="5 5" />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  })()}
 
                   {/* Recent Days */}
                   <div className="bg-white rounded-xl shadow-md p-6">
